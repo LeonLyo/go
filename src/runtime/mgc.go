@@ -752,7 +752,7 @@ func pollFractionalWorkerExit() bool {
 // gcSetTriggerRatio sets the trigger ratio and updates everything
 // derived from it: the absolute trigger, the heap goal, mark pacing,
 // and sweep pacing.
-//
+//gcSetTriggerRatio设置触发比率，并且更新从中得出的所有内容：绝对触发，堆目标，标记起搏(触发),清扫触发
 // This can be called any time. If GC is the in the middle of a
 // concurrent phase, it will adjust the pacing of that phase.
 //

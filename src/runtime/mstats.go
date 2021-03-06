@@ -99,7 +99,7 @@ type mstats struct {
 	// When heap_live ≥ gc_trigger, the mark phase will start.
 	// This is also the heap size by which proportional sweeping
 	// must be complete.
-	//
+	//gc_trigger是下次触发标记阶段的堆大小值，其值为标记完成的值*triggerRatio
 	// This is computed from triggerRatio during mark termination
 	// for the next cycle's trigger.
 	gc_trigger uint64
@@ -111,7 +111,8 @@ type mstats struct {
 	// hence goes up as we allocate and down as we sweep) while
 	// heap_live excludes these objects (and hence only goes up
 	// between GCs).
-	//
+	//heap_live是GC后存活的字节数，其值为GC后的marked值+gc后重新分配的内存，heap_live <= heap_alloc,
+	//因为heap_alloc包括那些还没有被扫描和标记的对象(因此在分配的时候值上升，扫描的时候会下降), 而heap_live只会在两个GC之间上升
 	// This is updated atomically without locking. To reduce
 	// contention, this is updated only when obtaining a span from
 	// an mcentral and at this point it counts all of the
@@ -123,7 +124,9 @@ type mstats struct {
 	// necessary rather than potentially too late and 2) this
 	// leads to a conservative GC rate rather than a GC rate that
 	// is potentially too low.
-	//
+	//heap_live在没有锁定下自动更新的, 为了减少争用，仅当从mcentral获得一个跨度时才更新，此时，它会计算该span中所有未分配的槽
+	//(这些槽将在该mcache从mcentral获取另一个span之前分配）。 因此，它稍微高估了“真实”存活堆的大小。 最好高估而不是低估，
+	//因为1）触发GC的时间比必要的时候要早，而不是潜在地太晚； 2）这导致保守的GC速率，而不是可能过低的GC速率。
 	// Reads should likewise be atomic (or during STW).
 	//
 	// Whenever this is updated, call traceHeapAlloc() and
