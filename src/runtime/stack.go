@@ -138,6 +138,7 @@ const (
 // Stacks are assigned an order according to size.
 //     order = log_2(size/FixedStack)
 // There is a free list for each order.
+//在proc.go schedinit中进行初始化
 var stackpool [_NumStackOrders]struct {
 	item stackpoolItem
 	_    [cpu.CacheLinePadSize - unsafe.Sizeof(stackpoolItem{})%cpu.CacheLinePadSize]byte
@@ -184,6 +185,7 @@ func stackpoolalloc(order uint8) gclinkptr {
 	s := list.first
 	if s == nil {
 		// no free stacks. Allocate another span worth.
+		//分配32k(4个页)的内存大小
 		s = mheap_.allocManual(_StackCacheSize>>_PageShift, &memstats.stacks_inuse)
 		if s == nil {
 			throw("out of memory")

@@ -1079,7 +1079,7 @@ func (h *mheap) allocSpan(npages uintptr, manual bool, spanclass spanClass, sysS
 
 	// If the allocation is small enough, try the page cache!
 	pp := gp.m.p.ptr()
-	if pp != nil && npages < pageCachePages/4 {
+	if pp != nil && npages < pageCachePages/4 { //如果小于16个页，从p中分配
 		c := &pp.pcache
 
 		// If the cache is empty, refill it.

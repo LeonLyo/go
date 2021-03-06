@@ -3443,6 +3443,7 @@ func newproc(siz int32, fn *funcval) {
 	argp := add(unsafe.Pointer(&fn), sys.PtrSize)
 	gp := getg()
 	pc := getcallerpc()
+	//进入系统栈空间(go/gsignal栈)实现runtime·systemstack(SB)
 	systemstack(func() {
 		newproc1(fn, argp, siz, gp, pc)
 	})
@@ -3458,9 +3459,10 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 		_g_.m.throwing = -1 // do not dump full stacks
 		throw("go of nil func value")
 	}
+	//锁定m
 	acquirem() // disable preemption because it can be holding p in a local var
 	siz := narg
-	siz = (siz + 7) &^ 7
+	siz = (siz + 7) &^ 7 //size为8的倍数
 
 	// We could allocate a larger initial stack if necessary.
 	// Not worth it: this is almost always an error.

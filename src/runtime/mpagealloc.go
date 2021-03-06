@@ -230,15 +230,16 @@ type pageAlloc struct {
 	// inUse.contains(searchAddr) must always be true. The one
 	// exception to this rule is that it may take on the value of
 	// maxSearchAddr to indicate that the heap is exhausted.
-	//
+	//分配内存的时候，从searchAddr开始搜索，searchAddr总是指向inUse的内存，除非=maxSearchAddr代表内存枯竭
 	// When added with arenaBaseOffset, we guarantee that
 	// all valid heap addresses (when also added with
 	// arenaBaseOffset) below this value are allocated and
 	// not worth searching.
-	//
+	//当加上arenaBaseOffset的时候，能够保证searchAddr+arenaBaseOffset以下的内存以及被分配了并且不需要被搜寻
 	// Note that adding in arenaBaseOffset transforms addresses
 	// to a new address space with a linear view of the full address
 	// space on architectures with segmented address spaces.
+	//在具有分段地址空间的体系结构上，在arenaBaseOffset中添加具有完整地址空间的线性视图的地址，即可将地址转换为新的地址空间。
 	searchAddr uintptr
 
 	// The address to start a scavenge candidate search with. It

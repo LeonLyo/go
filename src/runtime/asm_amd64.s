@@ -332,6 +332,7 @@ TEXT runtime·systemstack_switch(SB), NOSPLIT, $0-0
 // func systemstack(fn func())
 TEXT runtime·systemstack(SB), NOSPLIT, $0-8
 	MOVQ	fn+0(FP), DI	// DI = fn
+	//检测tls中g是否为g0/gsignal，如果不是，需要切换到g0,并使用g0栈空间
 	get_tls(CX)
 	MOVQ	g(CX), AX	// AX = g
 	MOVQ	g_m(AX), BX	// BX = m
@@ -350,26 +351,26 @@ TEXT runtime·systemstack(SB), NOSPLIT, $0-8
 	// save our state in g->sched. Pretend to
 	// be systemstack_switch if the G stack is scanned.
 	MOVQ	$runtime·systemstack_switch(SB), SI
-	MOVQ	SI, (g_sched+gobuf_pc)(AX)
-	MOVQ	SP, (g_sched+gobuf_sp)(AX)
+	MOVQ	SI, (g_sched+gobuf_pc)(AX)//pc放systemstack_switch的含义是什么
+	MOVQ	SP, (g_sched+gobuf_sp)(AX)//保存当前g上sp信息
 	MOVQ	AX, (g_sched+gobuf_g)(AX)
 	MOVQ	BP, (g_sched+gobuf_bp)(AX)
 
 	// switch to g0
 	MOVQ	DX, g(CX)
-	MOVQ	(g_sched+gobuf_sp)(DX), BX
+	MOVQ	(g_sched+gobuf_sp)(DX), BX //将g0的栈指针取出到BX
 	// make it look like mstart called systemstack on g0, to stop traceback
-	SUBQ	$8, BX
-	MOVQ	$runtime·mstart(SB), DX
-	MOVQ	DX, 0(BX)
-	MOVQ	BX, SP
+	SUBQ	$8, BX//BX = BX-8
+	MOVQ	$runtime·mstart(SB), DX //将mstart函数地址放到DX
+	MOVQ	DX, 0(BX)  //DX放到了 BX--BX+8的空间内，难道作为返回地址？
+	MOVQ	BX, SP //SP指向g0栈空间
 
 	// call target function
 	MOVQ	DI, DX
 	MOVQ	0(DI), DI
-	CALL	DI
+	CALL	DI//调用fn
 
-	// switch back to g
+	// switch back to g 切换回g空间
 	get_tls(CX)
 	MOVQ	g(CX), AX
 	MOVQ	g_m(AX), BX

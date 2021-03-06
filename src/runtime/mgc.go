@@ -187,7 +187,7 @@ func gcinit() {
 
 	// Set gcpercent from the environment. This will also compute
 	// and set the GC trigger and goal.
-	_ = setGCPercent(readgogc())
+	_ = setGCPercent(readgogc()) //设置gc百分比
 
 	work.startSema = 1
 	work.markDoneSema = 1
