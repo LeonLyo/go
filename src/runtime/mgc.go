@@ -187,9 +187,9 @@ func gcinit() {
 
 	// Set gcpercent from the environment. This will also compute
 	// and set the GC trigger and goal.
-	_ = setGCPercent(readgogc()) //设置gc百分比
+	_ = setGCPercent(readgogc()) //设置gc百分比，gc百分比用于计算内存goal(next_gc)，用于校验限制gc_trigger,gc_trigger要比
 
-	work.startSema = 1
+	work.startSema = 1 //信号量为1
 	work.markDoneSema = 1
 }
 
@@ -230,7 +230,7 @@ func setGCPercent(in int32) (out int32) {
 		gcpercent = in
 		heapminimum = defaultHeapMinimum * uint64(gcpercent) / 100
 		// Update pacing in response to gcpercent change.
-		gcSetTriggerRatio(memstats.triggerRatio)
+		gcSetTriggerRatio(memstats.triggerRatio) //启动时 memstats.triggerRatio = 7 / 8.0
 		unlock(&mheap_.lock)
 	})
 	// Pacing changed, so the scavenger should be awoken.
@@ -320,16 +320,18 @@ var gcMarkWorkerModeStrings = [...]string{
 // gcController implements the GC pacing controller that determines
 // when to trigger concurrent garbage collection and how much marking
 // work to do in mutator assists and background marking.
-//
+//gcController实现了GC步调控制器，来决定什么时候触发并发垃圾收集，有多少标记工作需要辅助程序(助推器)和后台标记中做
 // It uses a feedback control algorithm to adjust the memstats.gc_trigger
 // trigger based on the heap growth and GC CPU utilization each cycle.
 // This algorithm optimizes for heap growth to match GOGC and for CPU
 // utilization between assist and background marking to be 25% of
 // GOMAXPROCS. The high-level design of this algorithm is documented
 // at https://golang.org/s/go15gcpacing.
-//
+//gcController基于每个周期的堆增长和GC CPU的利用率，使用反馈控制算法调整memstats.gc_trigger触发器
+//该算法针对堆增长进行了优化，以匹配GOGC和在辅助和后台标记工作使用CPU利用率为GOMAXPROCS的25％
 // All fields of gcController are used only during a single mark
 // cycle.
+//gcController的所有字段仅在单个标记周期中使用
 var gcController gcControllerState
 
 type gcControllerState struct {
@@ -338,7 +340,7 @@ type gcControllerState struct {
 	// bounded batches, since it is both written and read
 	// throughout the cycle. At the end of the cycle, this is how
 	// much of the retained heap is scannable.
-	//
+	//scanWork是在周期中已经执行的总扫描工作，周期内自动更新，因为真个周期内被读取和写入，因此更新以有限的批次进行，在周期结束，它将是多少保留堆是可扫描的
 	// Currently this is the bytes of heap scanned. For most uses,
 	// this is an opaque unit of work, but for estimation the
 	// definition is important.
@@ -349,23 +351,27 @@ type gcControllerState struct {
 	// the background scan and stolen by mutator assists. This is
 	// updated atomically. Updates occur in bounded batches, since
 	// it is both written and read throughout the cycle.
+	//bgScanCredit是后台并发扫描积累的扫描工作信用，在申请内存的时候，用于辅助扫描消耗信用
 	bgScanCredit int64
 
 	// assistTime is the nanoseconds spent in mutator assists
 	// during this cycle. This is updated atomically. Updates
 	// occur in bounded batches, since it is both written and read
 	// throughout the cycle.
+	//gc周期内辅助扫描花费的辅助时间
 	assistTime int64
 
 	// dedicatedMarkTime is the nanoseconds spent in dedicated
 	// mark workers during this cycle. This is updated atomically
 	// at the end of the concurrent mark phase.
+	//gc周期内专用扫描花费的时间
 	dedicatedMarkTime int64
 
 	// fractionalMarkTime is the nanoseconds spent in the
 	// fractional mark worker during this cycle. This is updated
 	// atomically throughout the cycle and will be up-to-date if
 	// the fractional mark worker is not currently running.
+	//gc周期内兼职扫描花费的时间
 	fractionalMarkTime int64
 
 	// idleMarkTime is the nanoseconds spent in idle marking
@@ -381,12 +387,14 @@ type gcControllerState struct {
 	// workers that need to be started. This is computed at the
 	// beginning of each cycle and decremented atomically as
 	// dedicated mark workers get started.
+	//gc周期需要专用扫描协程的数量,周期开始计算，开启专用扫描协程减少
 	dedicatedMarkWorkersNeeded int64
 
 	// assistWorkPerByte is the ratio of scan work to allocated
 	// bytes that should be performed by mutator assists. This is
 	// computed at the beginning of each cycle and updated every
 	// time heap_scan is updated.
+	//剩余的扫描工作/剩余的堆空间，就是接下来分配一个字节需要做的扫描工作
 	assistWorkPerByte float64
 
 	// assistBytesPerWork is 1/assistWorkPerByte.
@@ -402,6 +410,7 @@ type gcControllerState struct {
 	// this will be 0.05 to make up the missing 5%.
 	//
 	// If this is zero, no fractional workers are needed.
+	//兼职扫描协程利用率目标
 	fractionalUtilizationGoal float64
 
 	_ cpu.CacheLinePad
@@ -434,10 +443,10 @@ func (c *gcControllerState) startCycle() {
 	// 25%. For small GOMAXPROCS, this would introduce too much
 	// error, so we add fractional workers in that case.
 	totalUtilizationGoal := float64(gomaxprocs) * gcBackgroundUtilization
-	c.dedicatedMarkWorkersNeeded = int64(totalUtilizationGoal + 0.5)
+	c.dedicatedMarkWorkersNeeded = int64(totalUtilizationGoal + 0.5) //round四舍五入
 	utilError := float64(c.dedicatedMarkWorkersNeeded)/totalUtilizationGoal - 1
 	const maxUtilError = 0.3
-	if utilError < -maxUtilError || utilError > maxUtilError {
+	if utilError < -maxUtilError || utilError > maxUtilError { //四舍五入偏离目标30%以上
 		// Rounding put us more than 30% off our goal. With
 		// gcBackgroundUtilization of 25%, this happens for
 		// GOMAXPROCS<=3 or GOMAXPROCS=6. Enable fractional
@@ -481,10 +490,11 @@ func (c *gcControllerState) startCycle() {
 // improved estimates. This should be called either under STW or
 // whenever memstats.heap_scan, memstats.heap_live, or
 // memstats.next_gc is updated (with mheap_.lock held).
-//
+//revise在GC周期内考虑改进预估值，用来更新辅助扫描的比率
 // It should only be called when gcBlackenEnabled != 0 (because this
 // is when assists are enabled and the necessary statistics are
 // available).
+//根据当前heap_live(当前分配的堆)和next_gc(根据gcpercent计算的此次原则上可以分配的最大堆)计算assistWorkPerByte，assistBytesPerWork
 func (c *gcControllerState) revise() {
 	gcpercent := gcpercent
 	if gcpercent < 0 {
@@ -499,12 +509,12 @@ func (c *gcControllerState) revise() {
 	heapGoal := int64(memstats.next_gc)
 
 	// Compute the expected scan work remaining.
-	//
+	//计算预期的剩余的扫描工作
 	// This is estimated based on the expected
 	// steady-state scannable heap. For example, with
 	// GOGC=100, only half of the scannable heap is
 	// expected to be live, so that's what we target.
-	//
+	//是基于稳定态的可扫描堆的预估值，类如，GOGC=100的时候，预期只有一半可扫描对象是存活的，那么这就是我们的目标
 	// (This is a float calculation to avoid overflowing on
 	// 100*heap_scan.)
 	scanWorkExpected := int64(float64(memstats.heap_scan) * 100 / float64(100+gcpercent))
@@ -513,7 +523,8 @@ func (c *gcControllerState) revise() {
 		// We're past the soft goal, or we've already done more scan
 		// work than we expected. Pace GC so that in the worst case it
 		// will complete by the hard goal.
-		const maxOvershoot = 1.1
+		//我们完成了软目标或者我们已经做了比我们期望更多的扫描工作，(缓慢地)进行GC以便于在做坏的情况下完成艰难目标
+		const maxOvershoot = 1.1 //最大超调
 		heapGoal = int64(float64(memstats.next_gc) * maxOvershoot)
 
 		// Compute the upper bound on the scan work remaining.
@@ -557,7 +568,7 @@ func (c *gcControllerState) revise() {
 
 // endCycle computes the trigger ratio for the next cycle.
 func (c *gcControllerState) endCycle() float64 {
-	if work.userForced {
+	if work.userForced { //用户强制触发的GC
 		// Forced GC means this cycle didn't start at the
 		// trigger, so where it finished isn't good
 		// information about how to adjust the trigger.
@@ -755,7 +766,7 @@ func pollFractionalWorkerExit() bool {
 //gcSetTriggerRatio设置触发比率，并且更新从中得出的所有内容：绝对触发，堆目标，标记起搏(触发),清扫触发
 // This can be called any time. If GC is the in the middle of a
 // concurrent phase, it will adjust the pacing of that phase.
-//
+//如果gcSetTriggerRatio在并发阶段被调用，它将调整此阶段的步调
 // This depends on gcpercent, memstats.heap_marked, and
 // memstats.heap_live. These must be up to date.
 //
@@ -766,10 +777,13 @@ func gcSetTriggerRatio(triggerRatio float64) {
 	// cycle.
 	goal := ^uint64(0)
 	if gcpercent >= 0 {
+		//gcpercent默认是100,此时goal = 2倍memstats.heap_marked
+		//初始memstats.heap_marked = uint64(float64(heapminimum) / (1 + memstats.triggerRatio)) heapminimum 为4M memstats.triggerRatio 为 7/8.0
 		goal = memstats.heap_marked + memstats.heap_marked*uint64(gcpercent)/100
 	}
 
 	// Set the trigger ratio, capped to reasonable bounds.
+	//设置trigger ratio到合理范围 如果gcpercent >= 0 triggerRatio在[0.95 * float64(gcpercent) / 100 , 0.6 float64(gcpercent) / 100 ]
 	if gcpercent >= 0 {
 		scalingFactor := float64(gcpercent) / 100
 		// Ensure there's always a little margin so that the
@@ -815,7 +829,7 @@ func gcSetTriggerRatio(triggerRatio float64) {
 		trigger = uint64(float64(memstats.heap_marked) * (1 + triggerRatio))
 		// Don't trigger below the minimum heap size.
 		minTrigger := heapminimum
-		if !isSweepDone() {
+		if !isSweepDone() { //如果扫描未结束
 			// Concurrent sweep happens in the heap growth
 			// from heap_live to gc_trigger, so ensure
 			// that concurrent sweep has some heap growth
@@ -840,7 +854,9 @@ func gcSetTriggerRatio(triggerRatio float64) {
 			goal = trigger
 		}
 	}
-
+	//总结下来是:triggerRatio取值范围为[0.95 * float64(gcpercent) / 100 , 0.6 float64(gcpercent) / 100 ]
+	//trigger = uint64(float64(memstats.heap_marked) * (1 + triggerRatio))
+	//goal = memstats.heap_marked * (1 + *uint64(gcpercent)/100) 故 goal > trigger，也就是提前扫描,避免扫描延后
 	// Commit to the trigger and goal.
 	memstats.gc_trigger = trigger
 	memstats.next_gc = goal
@@ -849,6 +865,7 @@ func gcSetTriggerRatio(triggerRatio float64) {
 	}
 
 	// Update mark pacing.
+	//gcController用来控制GC的步调
 	if gcphase != _GCoff {
 		gcController.revise()
 	}
@@ -874,7 +891,7 @@ func gcSetTriggerRatio(triggerRatio float64) {
 		}
 		pagesSwept := atomic.Load64(&mheap_.pagesSwept)
 		pagesInUse := atomic.Load64(&mheap_.pagesInUse)
-		sweepDistancePages := int64(pagesInUse) - int64(pagesSwept)
+		sweepDistancePages := int64(pagesInUse) - int64(pagesSwept) //未被扫描的页数
 		if sweepDistancePages <= 0 {
 			mheap_.sweepPagesPerByte = 0
 		} else {

@@ -100,19 +100,20 @@ func heapRetained() uint64 {
 
 // gcPaceScavenger updates the scavenger's pacing, particularly
 // its rate and RSS goal.
-//
+//更新scavenger步调，尤其是它的速率和RSS(Resident Set Size 实际使用物理内存)目标
 // The RSS goal is based on the current heap goal with a small overhead
 // to accommodate non-determinism in the allocator.
-//
+//RSS目标是基于当前的对目标再加上一个小的上调计算得来的，用于适应分配器的不确定
 // The pacing is based on scavengePageRate, which applies to both regular and
 // huge pages. See that constant for more information.
-//
+//基于scavengePageRate的进度用来适配常规和大型页面
 // mheap_.lock must be held or the world must be stopped.
 func gcPaceScavenger() {
 	// If we're called before the first GC completed, disable scavenging.
 	// We never scavenge before the 2nd GC cycle anyway (we don't have enough
 	// information about the heap yet) so this is fine, and avoids a fault
 	// or garbage data later.
+	//如果第一次GC完成前调用，禁用清理，无论如何，我们绝不会在第二次GC周期前清理(没有充足的关于堆的信息)，避免后面出现错误/垃圾数据
 	if memstats.last_next_gc == 0 {
 		mheap_.scavengeGoal = ^uint64(0)
 		return
@@ -140,7 +141,7 @@ func gcPaceScavenger() {
 	// where physPageSize > pageSize the calculations below will not be exact.
 	// Generally this is OK since we'll be off by at most one regular
 	// physical page.
-	retainedNow := heapRetained()
+	retainedNow := heapRetained() //获取保留堆的当前大小
 
 	// If we're already below our goal, or within one page of our goal, then disable
 	// the background scavenger. We disable the background scavenger if there's
@@ -403,7 +404,7 @@ func printScavTrace(released uintptr, forced bool) {
 // resetScavengeAddr sets the scavenge start address to the top of the heap's
 // address space. This should be called each time the scavenger's pacing
 // changes.
-//
+//scavReleased清零，scavAddr指向内存的最末端
 // s.mheapLock must be held.
 func (s *pageAlloc) resetScavengeAddr() {
 	released := atomic.Loaduintptr(&s.scavReleased)

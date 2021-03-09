@@ -21,7 +21,7 @@ import (
 //
 // Many of these fields are updated on the fly, while others are only
 // updated when updatememstats is called.
-type mstats struct {
+type mstats struct { //内存的统计信息
 	// General statistics.
 	alloc       uint64 // bytes allocated and not yet freed
 	total_alloc uint64 // bytes allocated (even if freed)
@@ -82,8 +82,9 @@ type mstats struct {
 
 	last_gc_nanotime uint64 // last gc (monotonic time)
 	tinyallocs       uint64 // number of tiny allocations that didn't cause actual allocation; not exported to go directly
-	last_next_gc     uint64 // next_gc for the previous GC
-	last_heap_inuse  uint64 // heap_inuse at mark termination of the previous GC
+	//上次GC的next_gc
+	last_next_gc    uint64 // next_gc for the previous GC
+	last_heap_inuse uint64 // heap_inuse at mark termination of the previous GC
 
 	// triggerRatio is the heap growth ratio that triggers marking.
 	//
@@ -92,6 +93,7 @@ type mstats struct {
 	// previous cycle. This should be ≤ GOGC/100 so the trigger
 	// heap size is less than the goal heap size. This is set
 	// during mark termination for the next cycle's trigger.
+	//triggerRatio是堆增长到触发标记的比率
 	triggerRatio float64
 
 	// gc_trigger is the heap size that triggers marking.
@@ -136,7 +138,7 @@ type mstats struct {
 	// heap_scan is the number of bytes of "scannable" heap. This
 	// is the live heap (as counted by heap_live), but omitting
 	// no-scan objects and no-scan tails of objects.
-	//
+	//heap_scan可以扫描堆的字节数，是省略了不可扫描对象和对象不可扫描tails的活跃堆
 	// Whenever this is updated, call gcController.revise().
 	heap_scan uint64
 
@@ -144,6 +146,7 @@ type mstats struct {
 	// GC. After mark termination, heap_live == heap_marked, but
 	// unlike heap_live, heap_marked does not change until the
 	// next mark termination.
+	//heap_marked是被上一次GC标记的字节数，扫描终止后，heap_live == heap_marked，heap_marked只有到下次标记终止才会被更改
 	heap_marked uint64
 }
 

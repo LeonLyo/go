@@ -244,6 +244,7 @@ type pageAlloc struct {
 
 	// The address to start a scavenge candidate search with. It
 	// need not point to memory contained in inUse.
+	//用于从此地址开始搜索可清扫的内存，不指向包含在inUse的内存
 	scavAddr uintptr
 
 	// The amount of memory scavenged since the last scavtrace print.
