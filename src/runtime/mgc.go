@@ -418,6 +418,7 @@ type gcControllerState struct {
 
 // startCycle resets the GC controller's state and computes estimates
 // for a new GC cycle. The caller must hold worldsema.
+//做重置操作，计算需要多少个专业清扫，兼职清扫的协程
 func (c *gcControllerState) startCycle() {
 	c.scanWork = 0
 	c.bgScanCredit = 0
@@ -581,6 +582,8 @@ func (c *gcControllerState) endCycle() float64 {
 	// take longer to respond to phase changes. Higher values
 	// react to phase changes quickly, but are more affected by
 	// transient changes. Values near 1 may be unstable.
+	//触发控制器的比例响应增益。 必须在[0，1]中。 较低的值可消除瞬态影响，但需要更长的时间来响应相位变化。
+	//较高的值会快速响应相位变化，但受瞬态变化的影响更大。 接近1的值可能不稳定
 	const triggerGain = 0.5
 
 	// Compute next cycle trigger ratio. First, this computes the

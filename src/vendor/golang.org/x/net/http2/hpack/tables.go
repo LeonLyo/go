@@ -12,13 +12,14 @@ import (
 // This is used to implement the static and dynamic tables.
 type headerFieldTable struct {
 	// For static tables, entries are never evicted.
-	//
+	//对于静态表，条目绝对不会被驱逐
 	// For dynamic tables, entries are evicted from ents[0] and added to the end.
 	// Each entry has a unique id that starts at one and increments for each
 	// entry that is added. This unique id is stable across evictions, meaning
 	// it can be used as a pointer to a specific entry. As in hpack, unique ids
 	// are 1-based. The unique id for ents[k] is k + evictCount + 1.
-	//
+	//动态表，条目从ents[0]被驱逐/在结尾添加，每一个条目都有一个从零开始添加递增唯一ID，唯一ID在驱逐过程中是稳定的，这意味着它可以被当做
+	//一个指向特定条目的指针，就像在hpack中，唯一ID是基于1的，ents[k]的唯一ID是k+evictCount + 1.
 	// Zero is not a valid unique id.
 	//
 	// evictCount should not overflow in any remotely practical situation. In
@@ -26,6 +27,8 @@ type headerFieldTable struct {
 	// assume a very powerful server that handles 1M QPS per connection and each
 	// request adds (then evicts) 100 entries from the table, it would still take
 	// 2M years for evictCount to overflow.
+	//evictCount在任何实际场景中都不应该溢出，实际上，每个http2连接都有一个动态表，如果假设我们有一个每个连接可以处理1M QPS的强大服务器，每个请求从这个表中
+	//添加（然后驱逐）100个条目，如果让它溢出也得花费2M年
 	ents       []HeaderField
 	evictCount uint64
 

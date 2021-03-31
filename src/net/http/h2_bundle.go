@@ -1218,6 +1218,7 @@ var (
 )
 
 // flow is the flow control window's size.
+//流量控制窗口
 type http2flow struct {
 	// n is the number of DATA bytes we're allowed to send.
 	// A flow is kept both on a conn and a per-stream.
@@ -1226,6 +1227,7 @@ type http2flow struct {
 	// conn points to the shared connection-level flow that is
 	// shared by all streams on that conn. It is nil for the flow
 	// that's on the conn directly.
+	//conn指向被所有streams共享的连接层级的流(量)
 	conn *http2flow
 }
 
@@ -1303,6 +1305,7 @@ func (t http2FrameType) String() string {
 
 // Flags is a bitmask of HTTP/2 flags.
 // The meaning of flags varies depending on the frame type.
+//http2标志的位掩码，标志的含义因帧类型而不同
 type http2Flags uint8
 
 // Has reports whether f contains all (0 or more) flags in v.
@@ -1513,7 +1516,7 @@ type http2Framer struct {
 	// unfinished HEADERS/CONTINUATION.
 	lastHeaderStream uint32
 
-	maxReadSize uint32
+	maxReadSize uint32 //16k-16M
 	headerBuf   [http2frameHeaderLen]byte
 
 	// TODO: let getReadBuf be configurable, and use a less memory-pinning
@@ -1593,6 +1596,7 @@ func (f *http2Framer) startWrite(ftype http2FrameType, flags http2Flags, streamI
 func (f *http2Framer) endWrite() error {
 	// Now that we know the final size, fill in the FrameHeader in
 	// the space previously reserved for it. Abuse append.
+	//在先前为它预留(startWrite函数中有预留)的空间填充
 	length := len(f.wbuf) - http2frameHeaderLen
 	if length >= (1 << 24) {
 		return http2ErrFrameTooLarge
@@ -2045,9 +2049,11 @@ func (f *http2SettingsFrame) ForeachSetting(fn func(http2Setting) error) error {
 
 // WriteSettings writes a SETTINGS frame with zero or more settings
 // specified and the ACK bit not set.
-//
+//写设置帧并且不设置ACK位
 // It will perform exactly one Write to the underlying Writer.
+//只执行一次写到底层写
 // It is the caller's responsibility to not call other Write methods concurrently.
+//调用者有责任不并发调用其他写方法
 func (f *http2Framer) WriteSettings(settings ...http2Setting) error {
 	f.startWrite(http2FrameSettings, 0, 0)
 	for _, s := range settings {
@@ -3668,6 +3674,7 @@ type http2Server struct {
 	// this server is willing to read. A valid value is between
 	// 16k and 16M, inclusive. If zero or otherwise invalid, a
 	// default value is used.
+	//可选，指定服务器江都区的最大帧，可用值为16k~16M,如果是不可用值，将是一个默认值1M（1 << 20）
 	MaxReadFrameSize uint32
 
 	// PermitProhibitedCipherSuites, if true, permits the use of
@@ -4070,24 +4077,26 @@ type http2serverConn struct {
 	wroteFrameCh     chan http2frameWriteResult  // from writeFrameAsync -> serve, tickles more frame writes
 	bodyReadCh       chan http2bodyReadMsg       // from handlers -> serve
 	serveMsgCh       chan interface{}            // misc messages & code to send to / run on the serve loop
-	flow             http2flow                   // conn-wide (not stream-specific) outbound flow control
-	inflow           http2flow                   // conn-wide inbound flow control
+	flow             http2flow                   // conn-wide (not stream-specific) outbound flow control 出站流量控制
+	inflow           http2flow                   // conn-wide inbound flow control //进站流量控制
 	tlsState         *tls.ConnectionState        // shared by all handlers, like net/http
 	remoteAddrStr    string
 	writeSched       http2WriteScheduler
 
 	// Everything following is owned by the serve loop; use serveG.check():
-	serveG                      http2goroutineLock // used to verify funcs are on serve()
-	pushEnabled                 bool
-	sawFirstSettings            bool // got the initial SETTINGS frame after the preface
-	needToSendSettingsAck       bool
-	unackedSettings             int    // how many SETTINGS have we sent without ACKs?
-	queuedControlFrames         int    // control frames in the writeSched queue
-	clientMaxStreams            uint32 // SETTINGS_MAX_CONCURRENT_STREAMS from client (our PUSH_PROMISE limit)
-	advMaxStreams               uint32 // our SETTINGS_MAX_CONCURRENT_STREAMS advertised the client
-	curClientStreams            uint32 // number of open streams initiated by the client
-	curPushedStreams            uint32 // number of open streams initiated by server push
-	maxClientStreamID           uint32 // max ever seen from client (odd), or 0 if there have been no client requests
+	serveG                http2goroutineLock // used to verify funcs are on serve()
+	pushEnabled           bool
+	sawFirstSettings      bool // got the initial SETTINGS frame after the preface
+	needToSendSettingsAck bool
+	unackedSettings       int    // how many SETTINGS have we sent without ACKs?
+	queuedControlFrames   int    // control frames in the writeSched queue
+	clientMaxStreams      uint32 // SETTINGS_MAX_CONCURRENT_STREAMS from client (our PUSH_PROMISE limit)
+	advMaxStreams         uint32 // our SETTINGS_MAX_CONCURRENT_STREAMS advertised the client
+	curClientStreams      uint32 // number of open streams initiated by the client
+	curPushedStreams      uint32 // number of open streams initiated by server push
+	//从客户端看到的最大值(奇数)
+	maxClientStreamID uint32 // max ever seen from client (odd), or 0 if there have been no client requests
+	//最后一次推送promise的ID(偶数)，如果没有推送为0
 	maxPushPromiseID            uint32 // ID of the last push promise (even), or 0 if there have been no pushes
 	streams                     map[uint32]*http2stream
 	initialStreamSendWindowSize int32
@@ -4186,6 +4195,8 @@ func (sc *http2serverConn) state(streamID uint32) (http2streamState, *http2strea
 	// a client sends a HEADERS frame on stream 7 without ever sending a
 	// frame on stream 5, then stream 5 transitions to the "closed"
 	// state when the first frame for stream 7 is sent or received."
+	//新流标识的首次使用隐式地关闭-被对端用更低值的流标识初始化的处于空闲态的所有流，类如如果客户端发送了一个头帧在流7上而从未在流5上发送帧
+	//然后在发送或者接收流7的第一个帧被时，流5转换为关闭状态
 	if streamID%2 == 1 {
 		if streamID <= sc.maxClientStreamID {
 			return http2stateClosed, nil
@@ -4297,12 +4308,13 @@ func (sc *http2serverConn) canonicalHeader(v string) string {
 }
 
 type http2readFrameResult struct {
-	f   http2Frame // valid until readMore is called
+	f   http2Frame // valid until readMore is called 调用readMore前有效
 	err error
 
 	// readMore should be called once the consumer no longer needs or
 	// retains f. After readMore, f is invalid and more frames can be
 	// read.
+	//一旦消费者不再需要或保留f，readMore应该被调用，调用后更多的帧可以被读取
 	readMore func()
 }
 
@@ -4386,13 +4398,13 @@ func (sc *http2serverConn) serve() {
 	if http2VerboseLogs {
 		sc.vlogf("http2: server connection from %v on %p", sc.conn.RemoteAddr(), sc.hs)
 	}
-
+	//写配置信息
 	sc.writeFrame(http2FrameWriteRequest{
 		write: http2writeSettings{
-			{http2SettingMaxFrameSize, sc.srv.maxReadFrameSize()},
-			{http2SettingMaxConcurrentStreams, sc.advMaxStreams},
-			{http2SettingMaxHeaderListSize, sc.maxHeaderListSize()},
-			{http2SettingInitialWindowSize, uint32(sc.srv.initialStreamRecvWindowSize())},
+			{http2SettingMaxFrameSize, sc.srv.maxReadFrameSize()},                         //最大帧
+			{http2SettingMaxConcurrentStreams, sc.advMaxStreams},                          //最大并发流
+			{http2SettingMaxHeaderListSize, sc.maxHeaderListSize()},                       //最大header列表大小
+			{http2SettingInitialWindowSize, uint32(sc.srv.initialStreamRecvWindowSize())}, //初始化的窗口大小
 		},
 	})
 	sc.unackedSettings++
@@ -4629,16 +4641,17 @@ func (sc *http2serverConn) writeFrameFromHandler(wr http2FrameWriteRequest) erro
 
 // writeFrame schedules a frame to write and sends it if there's nothing
 // already being written.
-//
+//writeFrame调度一个帧去写，如果已经没有任何东西被写就发送
 // There is no pushback here (the serve goroutine never blocks). It's
 // the http.Handlers that block, waiting for their previous frames to
 // make it onto the wire
-//
+//没有回退操作（服务协程不会阻塞）
 // If you're not on the serve goroutine, use writeFrameFromHandler instead.
 func (sc *http2serverConn) writeFrame(wr http2FrameWriteRequest) {
 	sc.serveG.check()
 
 	// If true, wr will not be written and wr.done will not be signaled.
+
 	var ignoreWrite bool
 
 	// We are not allowed to write frames on closed streams. RFC 7540 Section
@@ -4653,12 +4666,15 @@ func (sc *http2serverConn) writeFrame(wr http2FrameWriteRequest) {
 	// handler hasn't yet been notified of the close). In this case, we simply
 	// ignore the frame. The handler will notice that the stream is closed when
 	// it waits for the frame to be written.
-	//
+	//serverConn可能在流处理器还在运行时关闭它，类如服务器在它收到一个坏数据就会关闭流，如果发生，处理器在流关闭后尝试去写一个帧(因为处理器还没有被通知关闭)
+	//这种情况下，我们只是简单地忽略这个帧，当处理器在等待写真的时候，注意到流已经关闭
 	// As an exception to this rule, we allow sending RST_STREAM after close.
 	// This allows us to immediately reject new streams without tracking any
 	// state for those streams (except for the queued RST_STREAM frame). This
 	// may result in duplicate RST_STREAMs in some cases, but the client should
 	// ignore those.
+	//这个规则的例外，关闭后我们允许发送RST_STREAM。这使我们可以立即拒绝新的流而不用追踪这些流的状态（排队中的RST_STREAM帧除外）
+	//在一些情况下，这会导致重复的RST_STREAMs，但是客户端应该会忽略这些
 	if wr.StreamID() != 0 {
 		_, isReset := wr.write.(http2StreamError)
 		if state, _ := sc.state(wr.StreamID()); state == http2stateClosed && !isReset {
@@ -4807,12 +4823,13 @@ func (sc *http2serverConn) wroteFrame(res http2frameWriteResult) {
 //
 // If a frame is already being written, nothing happens. This will be called again
 // when the frame is done being written.
-//
+//如果真已经被写，什么事情都不会发生。帧被写完后会被再次调用
 // If a frame isn't being written and we need to send one, the best frame
 // to send is selected by writeSched.
-//
+//如果没有帧在被写，我们需要发送一个帧，最好的帧发送由writeSched选择
 // If a frame isn't being written and there's nothing else to send, we
 // flush the write buffer.
+//如果没有帧在被写并且没有其他东西来发送，那么刷新写缓冲区
 func (sc *http2serverConn) scheduleFrameWrite() {
 	sc.serveG.check()
 	if sc.writingFrame || sc.inFrameScheduleLoop {
@@ -9585,6 +9602,7 @@ type http2FrameWriteRequest struct {
 
 	// stream is the stream on which this frame will be written.
 	// nil for non-stream frames like PING and SETTINGS.
+	//stream是这个帧将被写到的那个stream
 	stream *http2stream
 
 	// done, if non-nil, must be a buffered channel with space for
@@ -9864,16 +9882,21 @@ const (
 // priorityNode is a node in an HTTP/2 priority tree.
 // Each node is associated with a single stream ID.
 // See RFC 7540, Section 5.3.
+//http2priorityNode是与一个流ID关联的优先级节点，私认为这就是个流实体
 type http2priorityNode struct {
-	q            http2writeQueue        // queue of pending frames to write
-	id           uint32                 // id of the stream, or 0 for the root of the tree
-	weight       uint8                  // the actual weight is weight+1, so the value is in [1,256]
-	state        http2priorityNodeState // open | closed | idle
-	bytes        int64                  // number of bytes written by this node, or 0 if closed
-	subtreeBytes int64                  // sum(node.bytes) of all nodes in this subtree
+	//写请求队列，用于保存在该流上等待写的帧
+	q      http2writeQueue        // queue of pending frames to write
+	id     uint32                 // id of the stream, or 0 for the root of the tree
+	weight uint8                  // the actual weight is weight+1, so the value is in [1,256]
+	state  http2priorityNodeState // open | closed | idle
+	//节点已经写的字节数
+	bytes int64 // number of bytes written by this node, or 0 if closed
+	//节点以及其子节点写的字节总数
+	subtreeBytes int64 // sum(node.bytes) of all nodes in this subtree
 
 	// These links form the priority tree.
-	parent     *http2priorityNode
+	parent *http2priorityNode
+	//子节点是个链表，node指向子节点的首个节点
 	kids       *http2priorityNode // start of the kids list
 	prev, next *http2priorityNode // doubly-linked list of siblings
 }
@@ -10167,6 +10190,8 @@ func (ws *http2priorityWriteScheduler) Push(wr http2FrameWriteRequest) {
 			// push wr onto the root, rather than creating a new priorityNode,
 			// since RST_STREAM is tiny and the stream's priority is unknown
 			// anyway. See issue #17919.
+			//id是一个空闲/关闭的流，那么wr不应该是头帧/数据帧。可以是一个RST_STREAM，这种情况下，我们推送wr到根流而不是创建一个新的优先级节点
+			//因为RST_STREAM是一个极小并且流的优先级仍然是未知的
 			if wr.DataSize() > 0 {
 				panic("add DATA on non-open stream")
 			}
