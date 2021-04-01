@@ -1271,16 +1271,21 @@ var http2padZeros = make([]byte, 255) // zeros for padding
 type http2FrameType uint8
 
 const (
-	http2FrameData         http2FrameType = 0x0
-	http2FrameHeaders      http2FrameType = 0x1
-	http2FramePriority     http2FrameType = 0x2
-	http2FrameRSTStream    http2FrameType = 0x3
-	http2FrameSettings     http2FrameType = 0x4
-	http2FramePushPromise  http2FrameType = 0x5
-	http2FramePing         http2FrameType = 0x6
+	http2FrameData      http2FrameType = 0x0 //数据帧
+	http2FrameHeaders   http2FrameType = 0x1 //header帧，用于开启一个 Stream，当然也用于传输正常 HTTP 请求中的 Header 信息。
+	http2FramePriority  http2FrameType = 0x2 //优先级帧，用于指定 Stream 的优先级
+	http2FrameRSTStream http2FrameType = 0x3 //重置帧，用于立即终止 Stream.主要用来取消流，或者发生异常时表明需要终止。
+	//设置帧，用来控制客户端和服务端之间通信的一些配置，用来控制客户端和服务端之间通信的一些配置。
+	//SETTINGS 帧必须在连接开始时由通信双方发送，并且可以在任何其他时间由任一端点在连接的生命周期内发送。SETTINGS 帧必须在 id 为 0 的 stream 上进行发送，不能通过其他 stream 发送；SETTINGS 影响的是整个 TCP 链接，而不是某个 stream；在 SETTINGS 设置出现错误时，必须当做 connection error 重置整个链接。SETTINGS 帧带有 Ack 的 Flag，接收方必须收到 ack 为 0 的 SETTINGS 后，应马上启用 SETTING 的配置并返回一个 Ack 为 1 的 SETTINGS 帧
+	http2FrameSettings    http2FrameType = 0x4
+	http2FramePushPromise http2FrameType = 0x5 //用于服务端在发送 PUSH 之前先发送 PUSH_PROMISE 帧来通知客户端将要发送的 PUSH 信息
+	//PING帧是用来测量来自发送方的最小往返时间以及确定空闲连接是否仍然起作用的机制。 PING 帧可以从任何一方发送。
+	//PING 帧跟 SETTINGS 帧非常类似，一个是必须在 id 为 0 的 stream 上发送，另一个就是它也包含一个 Ack 的 Flag，发送方发送 ack=0 的 PING 帧，接收方必须响应一个 ack=1 的 PING 帧，并且 PING 帧的响应 应该 优先于任何其他帧。
+	http2FramePing http2FrameType = 0x6
+	//用于关闭连接，GOAWAY 允许端点优雅地停止接受新流，同时仍然完成先前建立的流的处理。这个就厉害了，当服务端需要维护时，发送一个 GOAWAY 的 Frame 给客户端，那么发送之前的 Stream 都正常处理了，发送 GOAWAY 后，客户端会新启用一个链接，继续刚才未完成的 Stream 发送
 	http2FrameGoAway       http2FrameType = 0x7
-	http2FrameWindowUpdate http2FrameType = 0x8
-	http2FrameContinuation http2FrameType = 0x9
+	http2FrameWindowUpdate http2FrameType = 0x8 //用于流控(flow control)
+	http2FrameContinuation http2FrameType = 0x9 //用于持续的发送未发送完的 HTTP header 信息.如果前边是这三个帧(HEADERS, PUSH_PROMISE, or CONTINUATION)，并且未携带 END_HEADERS 的 flag，就可以继续发送 CONTINUATION 帧。
 )
 
 var http2frameName = map[http2FrameType]string{
@@ -1579,6 +1584,12 @@ func (fr *http2Framer) maxHeaderListSize() uint32 {
 	return fr.MaxHeaderListSize
 }
 
+/*
+用于帧公共首部数据填充，包括9个字节,结构如下
++-------------------------------------------------------------------------------+
+|预留在end时填充帧字节大小(最大2^24-1)(3bytes)|帧类型(1byte)|帧标识(1byte)|流ID(4bytes)|
++-------------------------------------------------------------------------------+
+*/
 func (f *http2Framer) startWrite(ftype http2FrameType, flags http2Flags, streamID uint32) {
 	// Write the FrameHeader.
 	f.wbuf = append(f.wbuf[:0],
@@ -1593,6 +1604,7 @@ func (f *http2Framer) startWrite(ftype http2FrameType, flags http2Flags, streamI
 		byte(streamID))
 }
 
+//填充帧长度，写入帧
 func (f *http2Framer) endWrite() error {
 	// Now that we know the final size, fill in the FrameHeader in
 	// the space previously reserved for it. Abuse append.
@@ -4084,9 +4096,12 @@ type http2serverConn struct {
 	writeSched       http2WriteScheduler
 
 	// Everything following is owned by the serve loop; use serveG.check():
-	serveG                http2goroutineLock // used to verify funcs are on serve()
-	pushEnabled           bool
-	sawFirstSettings      bool // got the initial SETTINGS frame after the preface
+	serveG           http2goroutineLock // used to verify funcs are on serve()
+	pushEnabled      bool
+	sawFirstSettings bool // got the initial SETTINGS frame after the preface
+	//SETTINGS 帧必须在 id 为 0 的 stream 上进行发送，不能通过其他 stream 发送；SETTINGS 影响的是整个 TCP 链接，而不是某个 stream
+	//SETTINGS 帧带有 Ack 的 Flag，接收方必须收到 ack 为 0 的 SETTINGS 后，应马上启用 SETTING 的配置并返回一个 Ack 为 1 的 SETTINGS 帧
+	//是否需要发送Settings回应
 	needToSendSettingsAck bool
 	unackedSettings       int    // how many SETTINGS have we sent without ACKs?
 	queuedControlFrames   int    // control frames in the writeSched queue
@@ -4094,6 +4109,8 @@ type http2serverConn struct {
 	advMaxStreams         uint32 // our SETTINGS_MAX_CONCURRENT_STREAMS advertised the client
 	curClientStreams      uint32 // number of open streams initiated by the client
 	curPushedStreams      uint32 // number of open streams initiated by server push
+	//客户端发起的 Stream id 必须为奇数，服务端发起的 Stream id 必须为偶数；并且每次建立新 Stream 的时候，id 必须比上一次的建立的 Stream 的 id 大；
+	//当在一个连接里，如果无限建立 Stream，最后 id 大于 2^31 时，必须从新建立 TCP 连接，来发送请求。如果是服务端的 Stream id 超过上限，需要对客户端发送一个 GOWAY 的 Frame 来强制客户端重新发起连接。
 	//从客户端看到的最大值(奇数)
 	maxClientStreamID uint32 // max ever seen from client (odd), or 0 if there have been no client requests
 	//最后一次推送promise的ID(偶数)，如果没有推送为0
@@ -4105,14 +4122,16 @@ type http2serverConn struct {
 	peerMaxHeaderListSize       uint32            // zero means unknown (default)
 	canonHeader                 map[string]string // http2-lower-case -> Go-Canonical-Case
 	writingFrame                bool              // started writing a frame (on serve goroutine or separate)
-	writingFrameAsync           bool              // started a frame on its own goroutine but haven't heard back on wroteFrameCh
-	needsFrameFlush             bool              // last frame write wasn't a flush
-	inGoAway                    bool              // we've started to or sent GOAWAY
-	inFrameScheduleLoop         bool              // whether we're in the scheduleFrameWrite loop
-	needToSendGoAway            bool              // we need to schedule a GOAWAY frame write
-	goAwayCode                  http2ErrCode
-	shutdownTimer               *time.Timer // nil until used
-	idleTimer                   *time.Timer // nil if unused
+	//帧正在另一个routine异步写，但是还没有收到回应
+	writingFrameAsync   bool // started a frame on its own goroutine but haven't heard back on wroteFrameCh
+	needsFrameFlush     bool // last frame write wasn't a flush
+	inGoAway            bool // we've started to or sent GOAWAY
+	inFrameScheduleLoop bool // whether we're in the scheduleFrameWrite loop
+	//服务端Stream id超过上限(2^31-1)时，服务端发送一个GOAWAY帧强制客户端重新发起一个连接
+	needToSendGoAway bool // we need to schedule a GOAWAY frame write
+	goAwayCode       http2ErrCode
+	shutdownTimer    *time.Timer // nil until used
+	idleTimer        *time.Timer // nil if unused
 
 	// Owned by the writeFrameAsync goroutine:
 	headerWriteBuf bytes.Buffer
@@ -4647,6 +4666,7 @@ func (sc *http2serverConn) writeFrameFromHandler(wr http2FrameWriteRequest) erro
 // make it onto the wire
 //没有回退操作（服务协程不会阻塞）
 // If you're not on the serve goroutine, use writeFrameFromHandler instead.
+//此函数会将帧的写请求放到特定的streamID对应的node上的请求队列上，然后随着scheduleFrameWrite调度去写到连接上
 func (sc *http2serverConn) writeFrame(wr http2FrameWriteRequest) {
 	sc.serveG.check()
 
@@ -4676,6 +4696,7 @@ func (sc *http2serverConn) writeFrame(wr http2FrameWriteRequest) {
 	//这个规则的例外，关闭后我们允许发送RST_STREAM。这使我们可以立即拒绝新的流而不用追踪这些流的状态（排队中的RST_STREAM帧除外）
 	//在一些情况下，这会导致重复的RST_STREAMs，但是客户端应该会忽略这些
 	if wr.StreamID() != 0 {
+		//resetStream的时候，会将write设置成http2StreamError
 		_, isReset := wr.write.(http2StreamError)
 		if state, _ := sc.state(wr.StreamID()); state == http2stateClosed && !isReset {
 			ignoreWrite = true
@@ -4748,6 +4769,7 @@ func (sc *http2serverConn) startFrameWrite(wr http2FrameWriteRequest) {
 
 	sc.writingFrame = true
 	sc.needsFrameFlush = true
+	//wr写入的数据字节数<=写缓存的可写大小，直接写入写缓存，否则异步处理
 	if wr.write.staysWithinBuffer(sc.bw.Available()) {
 		sc.writingFrameAsync = false
 		err := wr.write.writeFrame(sc)
@@ -4774,7 +4796,7 @@ func (sc *http2serverConn) wroteFrame(res http2frameWriteResult) {
 	sc.writingFrameAsync = false
 
 	wr := res.wr
-
+	//检测是否结束一个stream
 	if http2writeEndsStream(wr.write) {
 		st := wr.stream
 		if st == nil {
@@ -4792,6 +4814,8 @@ func (sc *http2serverConn) wroteFrame(res http2frameWriteResult) {
 			// hanging up on them. We'll transition to
 			// stateClosed after the RST_STREAM frame is
 			// written.
+			//因为处理程序已经处理完成，但是net/http包没有提供机制去关闭正在读取数据的ResponseWriter，我们进入关闭状态，然后通知对端后我们悬挂在此
+			//在发送RST_STREAM(重置)帧之后转化为关闭态
 			st.state = http2stateHalfClosedLocal
 			// Section 8.1: a server MAY request that the client abort
 			// transmission of a request without error by sending a
@@ -9212,6 +9236,7 @@ type http2writeFramer interface {
 	// staysWithinBuffer reports whether this writer promises that
 	// it will only write less than or equal to size bytes, and it
 	// won't Flush the write context.
+	//staysWithinBuffer报告写者是否允诺将只写<=size字节的大小，并且不刷新写上下文
 	staysWithinBuffer(size int) bool
 }
 
@@ -9285,6 +9310,7 @@ func (p *http2writeGoAway) writeFrame(ctx http2writeContext) error {
 
 func (*http2writeGoAway) staysWithinBuffer(max int) bool { return false } // flushes
 
+//数据帧，即http1.x的body
 type http2writeData struct {
 	streamID  uint32
 	p         []byte
@@ -9440,6 +9466,7 @@ func (w *http2writeResHeaders) writeHeaderBlock(ctx http2writeContext, frag []by
 }
 
 // writePushPromise is a request to write a PUSH_PROMISE and 0+ CONTINUATION frames.
+//PushPromise用于服务端在发送 PUSH 之前先发送 PUSH_PROMISE 帧来通知客户端将要发送的 PUSH 信息
 type http2writePushPromise struct {
 	streamID uint32   // pusher stream
 	method   string   // for :method
@@ -9598,6 +9625,7 @@ type http2FrameWriteRequest struct {
 	// write is the interface value that does the writing, once the
 	// WriteScheduler has selected this frame to write. The write
 	// functions are all defined in write.go.
+	//不同类型的帧有不同的写入方式
 	write http2writeFramer
 
 	// stream is the stream on which this frame will be written.
@@ -9949,6 +9977,7 @@ func (n *http2priorityNode) addBytes(b int64) {
 //
 // f(n, openParent) takes two arguments: the node to visit, n, and a bool that is true
 // if any ancestor p of n is still open (ignoring the root node).
+//walkReadyInOrder根据节点的优先级(如果同代的节点weight不同，那么根据“优先选择相对于其权重发送较少字节的节点”进行排序),然后从此节点上消费一个请求
 func (n *http2priorityNode) walkReadyInOrder(openParent bool, tmp *[]*http2priorityNode, f func(*http2priorityNode, bool) bool) bool {
 	if !n.q.empty() && f(n, openParent) {
 		return true
@@ -10011,6 +10040,7 @@ func (z http2sortPriorityNodeSiblings) Swap(i, k int) { z[i], z[k] = z[k], z[i] 
 func (z http2sortPriorityNodeSiblings) Less(i, k int) bool {
 	// Prefer the subtree that has sent fewer bytes relative to its weight.
 	// See sections 5.3.2 and 5.3.4.
+	//优先选择相对于其权重发送较少字节的子树
 	wi, bi := float64(z[i].weight+1), float64(z[i].subtreeBytes)
 	wk, bk := float64(z[k].weight+1), float64(z[k].subtreeBytes)
 	if bi == 0 && bk == 0 {
