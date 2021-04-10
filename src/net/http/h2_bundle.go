@@ -1014,7 +1014,7 @@ type http2dataBuffer struct {
 	r        int   // next byte to read is chunks[0][r]
 	w        int   // next byte to write is chunks[len(chunks)-1][w]
 	size     int   // total buffered bytes
-	expected int64 // we expect at least this many bytes in future Write calls (ignored if <= 0)
+	expected int64 // we expect at least this many bytes in future Write calls (ignored if <= 0)期望至少多少个字节的写数据
 }
 
 var http2errReadEmpty = errors.New("read from empty dataBuffer")
@@ -1750,6 +1750,7 @@ func (fr *http2Framer) ReadFrame() (http2Frame, error) {
 	if fr.lastFrame != nil {
 		fr.lastFrame.invalidate()
 	}
+	//读取一个帧的头部信息
 	fh, err := http2readFrameHeader(fr.headerBuf[:], fr.r)
 	if err != nil {
 		return nil, err
@@ -1757,10 +1758,12 @@ func (fr *http2Framer) ReadFrame() (http2Frame, error) {
 	if fh.Length > fr.maxReadSize {
 		return nil, http2ErrFrameTooLarge
 	}
+	//获取一个缓存
 	payload := fr.getReadBuf(fh.Length)
 	if _, err := io.ReadFull(fr.r, payload); err != nil {
 		return nil, err
 	}
+	//根据帧的类型获取对应的帧解析器，解析帧的负载数据
 	f, err := http2typeFrameParser(fh.Type)(fr.frameCache, fh, payload)
 	if err != nil {
 		if ce, ok := err.(http2connError); ok {
@@ -1815,7 +1818,7 @@ func (fr *http2Framer) checkFrameOrder(f http2Frame) error {
 	} else if fh.Type == http2FrameContinuation {
 		return fr.connError(http2ErrCodeProtocol, fmt.Sprintf("unexpected CONTINUATION for stream %d", fh.StreamID))
 	}
-
+	//如果帧的类型是http2FrameHeaders, http2FrameContinuation就判断帧是否结束，如果没结束，接下来读的帧类型必须是http2FrameContinuation
 	switch fh.Type {
 	case http2FrameHeaders, http2FrameContinuation:
 		if fh.Flags.Has(http2FlagHeadersEndHeaders) {
@@ -1850,7 +1853,7 @@ func (f *http2DataFrame) Data() []byte {
 }
 
 func http2parseDataFrame(fc *http2frameCache, fh http2FrameHeader, payload []byte) (http2Frame, error) {
-	if fh.StreamID == 0 {
+	if fh.StreamID == 0 { //数据帧必须关联一个流
 		// DATA frames MUST be associated with a stream. If a
 		// DATA frame is received whose stream identifier
 		// field is 0x0, the recipient MUST respond with a
@@ -1861,6 +1864,7 @@ func http2parseDataFrame(fc *http2frameCache, fh http2FrameHeader, payload []byt
 	f := fc.getDataFrame()
 	f.http2FrameHeader = fh
 
+	//如果有数据填充，获取填充大小(payload的第一个字节)
 	var padSize byte
 	if fh.Flags.Has(http2FlagDataPadded) {
 		var err error
@@ -1974,13 +1978,15 @@ func http2parseSettingsFrame(_ *http2frameCache, fh http2FrameHeader, p []byte) 
 		// field is anything other than 0x0, the endpoint MUST
 		// respond with a connection error (Section 5.4.1) of
 		// type PROTOCOL_ERROR.
+		//设置应用于一个连接而不是一个单独的流，所以SETTINGS帧的流ID必须是0
 		return nil, http2ConnectionError(http2ErrCodeProtocol)
 	}
-	if len(p)%6 != 0 {
+	if len(p)%6 != 0 { //每个设置的ID(2bytes) value(4bytes)
 		// Expecting even number of 6 byte settings.
 		return nil, http2ConnectionError(http2ErrCodeFrameSize)
 	}
 	f := &http2SettingsFrame{http2FrameHeader: fh, p: p}
+	//检测窗口大小 窗口大小不能大于(1<<31)-1
 	if v, ok := f.Value(http2SettingInitialWindowSize); ok && v > (1<<31)-1 {
 		// Values above the maximum flow control window size of 2^31 - 1 MUST
 		// be treated as a connection error (Section 5.4.1) of type
@@ -2255,7 +2261,7 @@ func http2parseHeadersFrame(_ *http2frameCache, fh http2FrameHeader, p []byte) (
 	hf := &http2HeadersFrame{
 		http2FrameHeader: fh,
 	}
-	if fh.StreamID == 0 {
+	if fh.StreamID == 0 { //HEADERS必须和一个流关联
 		// HEADERS frames MUST be associated with a stream. If a HEADERS frame
 		// is received whose stream identifier field is 0x0, the recipient MUST
 		// respond with a connection error (Section 5.4.1) of type
@@ -2263,11 +2269,13 @@ func http2parseHeadersFrame(_ *http2frameCache, fh http2FrameHeader, p []byte) (
 		return nil, http2connError{http2ErrCodeProtocol, "HEADERS frame with stream ID 0"}
 	}
 	var padLength uint8
+	//如果有填充读取填充长度(p的第一个字节)
 	if fh.Flags.Has(http2FlagHeadersPadded) {
 		if p, padLength, err = http2readByte(p); err != nil {
 			return
 		}
 	}
+	//如果有优先级，读取优先级有关信息，前四个字节以来的流信息，第5个字节Weight权重
 	if fh.Flags.Has(http2FlagHeadersPriority) {
 		var v uint32
 		p, v, err = http2readUint32(p)
@@ -2372,6 +2380,7 @@ type http2PriorityParam struct {
 	// StreamDep is a 31-bit stream identifier for the
 	// stream that this stream depends on. Zero means no
 	// dependency.
+	//流所依赖的流
 	StreamDep uint32
 
 	// Exclusive is whether the dependency is exclusive.
@@ -3484,7 +3493,7 @@ func http2validPseudoPath(v string) bool {
 type http2pipe struct {
 	mu       sync.Mutex
 	c        sync.Cond       // c.L lazily initialized to &p.mu
-	b        http2pipeBuffer // nil when done reading
+	b        http2pipeBuffer // nil when done reading 用来缓存写入的数据
 	unread   int             // bytes unread when done
 	err      error           // read error once empty. non-nil means closed.
 	breakErr error           // immediate read error (caller doesn't see rest of b)
@@ -3864,6 +3873,7 @@ func http2ConfigureServer(s *Server, conf *http2Server) error {
 	if s.TLSNextProto == nil {
 		s.TLSNextProto = map[string]func(*Server, *tls.Conn, Handler){}
 	}
+	//这里是处理http2的入口
 	protoHandler := func(hs *Server, c *tls.Conn, h Handler) {
 		if http2testHookOnConn != nil {
 			http2testHookOnConn()
@@ -4079,7 +4089,7 @@ type http2serverConn struct {
 	srv              *http2Server
 	hs               *Server
 	conn             net.Conn
-	bw               *http2bufferedWriter // writing to conn
+	bw               *http2bufferedWriter // writing to conn //加入了一个缓存的写缓存大小http2bufWriterPoolBufferSize(4k)
 	handler          Handler
 	baseCtx          context.Context
 	framer           *http2Framer
@@ -4453,7 +4463,7 @@ func (sc *http2serverConn) serve() {
 	go sc.readFrames() // closed by defer sc.conn.Close above
 
 	settingsTimer := time.AfterFunc(http2firstSettingsTimeout, sc.onSettingsTimer)
-	defer settingsTimer.Stop()
+	defer settingsTimer.Stop() //后面settingsTimer设置为nil此时也不会崩溃，因为defer的时候settingsTimer的值已经被传递了
 
 	loopNum := 0
 	for {
@@ -4728,9 +4738,9 @@ func (sc *http2serverConn) writeFrame(wr http2FrameWriteRequest) {
 				sc.conn.Close()
 			}
 		}
-		sc.writeSched.Push(wr)
+		sc.writeSched.Push(wr) //将http2FrameWriteRequest放入对应streamID对应的node的请求队列上
 	}
-	sc.scheduleFrameWrite()
+	sc.scheduleFrameWrite() //调度节点，将节点的写帧请求队列上的http2FrameWriteRequest写入conn
 }
 
 // startFrameWrite starts a goroutine to write wr (in a separate
@@ -4958,7 +4968,7 @@ func (sc *http2serverConn) processFrameFromReader(res http2readFrameResult) bool
 	sc.serveG.check()
 	err := res.err
 	if err != nil {
-		if err == http2ErrFrameTooLarge {
+		if err == http2ErrFrameTooLarge { //读取到的帧太大
 			sc.goAway(http2ErrCodeFrameSize)
 			return true // goAway will close the loop
 		}
@@ -5154,7 +5164,7 @@ func (sc *http2serverConn) closeStream(st *http2stream, err error) {
 
 func (sc *http2serverConn) processSettings(f *http2SettingsFrame) error {
 	sc.serveG.check()
-	if f.IsAck() {
+	if f.IsAck() { //收到的是设置响应帧
 		sc.unackedSettings--
 		if sc.unackedSettings < 0 {
 			// Why is the peer ACKing settings we never sent?
@@ -5175,11 +5185,13 @@ func (sc *http2serverConn) processSettings(f *http2SettingsFrame) error {
 	}
 	// TODO: judging by RFC 7540, Section 6.5.3 each SETTINGS frame should be
 	// acknowledged individually, even if multiple are received before the ACK.
+	//发送设置响应
 	sc.needToSendSettingsAck = true
 	sc.scheduleFrameWrite()
 	return nil
 }
 
+//设置连接的配置
 func (sc *http2serverConn) processSetting(s http2Setting) error {
 	sc.serveG.check()
 	if err := s.Valid(); err != nil {
@@ -5394,6 +5406,7 @@ func (sc *http2serverConn) processHeaders(f *http2MetaHeadersFrame) error {
 	// identifiers. [...] An endpoint that receives an unexpected
 	// stream identifier MUST respond with a connection error
 	// (Section 5.4.1) of type PROTOCOL_ERROR.
+	//客户端streamID必须为奇数，否则报错
 	if id%2 != 1 {
 		return http2ConnectionError(http2ErrCodeProtocol)
 	}
@@ -5422,6 +5435,7 @@ func (sc *http2serverConn) processHeaders(f *http2MetaHeadersFrame) error {
 	// endpoint has opened or reserved. [...]  An endpoint that
 	// receives an unexpected stream identifier MUST respond with
 	// a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+	//新建的流必须大于发起端已经打开或者保留的所有流
 	if id <= sc.maxClientStreamID {
 		return http2ConnectionError(http2ErrCodeProtocol)
 	}
@@ -5437,6 +5451,7 @@ func (sc *http2serverConn) processHeaders(f *http2MetaHeadersFrame) error {
 	// advertised concurrent stream limit to be exceeded MUST treat
 	// this as a stream error (Section 5.4.2) of type PROTOCOL_ERROR
 	// or REFUSED_STREAM.
+	//端点不能超过对方设置的限制，如果一个节点收到导致它所通告的并发流的限制的HEADERS帧，应该抛出错误
 	if sc.curClientStreams+1 > sc.advMaxStreams {
 		if sc.unackedSettings == 0 {
 			// They should know better.
@@ -5533,6 +5548,7 @@ func http2checkPriority(streamID uint32, p http2PriorityParam) error {
 		// this as a stream error (Section 5.4.2) of type PROTOCOL_ERROR."
 		// Section 5.3.3 says that a stream can depend on one of its dependencies,
 		// so it's only self-dependencies that are forbidden.
+		//如果流依赖的是自己，报错
 		return http2streamError(streamID, http2ErrCodeProtocol)
 	}
 	return nil
@@ -5825,7 +5841,7 @@ type http2bodyReadMsg struct {
 // Notes that the handler for the given stream ID read n bytes of its body
 // and schedules flow control tokens to be sent.
 func (sc *http2serverConn) noteBodyReadFromHandler(st *http2stream, n int, err error) {
-	sc.serveG.checkNotOn() // NOT on
+	sc.serveG.checkNotOn() // NOT on没有在主流程的携程上
 	if n > 0 {
 		select {
 		case sc.bodyReadCh <- http2bodyReadMsg{st, n}:
