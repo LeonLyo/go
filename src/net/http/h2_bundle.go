@@ -2030,6 +2030,7 @@ func (f *http2SettingsFrame) HasDuplicates() bool {
 	}
 	// If it's small enough (the common case), just do the n^2
 	// thing and avoid a map allocation.
+	//如果小于10个的话，将当前的id跟只有的id比较是否相等
 	if num < 10 {
 		for i := 0; i < num; i++ {
 			idi := f.Setting(i).ID
@@ -2042,6 +2043,7 @@ func (f *http2SettingsFrame) HasDuplicates() bool {
 		}
 		return false
 	}
+	//多的话采用map存储检测是否已经存在
 	seen := map[http2SettingID]bool{}
 	for i := 0; i < num; i++ {
 		id := f.Setting(i).ID
@@ -2204,6 +2206,7 @@ func http2parseWindowUpdateFrame(_ *http2frameCache, fh http2FrameHeader, p []by
 		// type PROTOCOL_ERROR; errors on the connection flow
 		// control window MUST be treated as a connection
 		// error (Section 5.4.1).
+		//接收方务必将流控制窗口增量为0的WINDOW_UPDATE帧的接收视为PROTOCOL_ERROR类型的流错误
 		if fh.StreamID == 0 {
 			return nil, http2ConnectionError(http2ErrCodeProtocol)
 		}
@@ -2404,6 +2407,7 @@ func http2parsePriorityFrame(_ *http2frameCache, fh http2FrameHeader, payload []
 	if len(payload) != 5 {
 		return nil, http2connError{http2ErrCodeFrameSize, fmt.Sprintf("PRIORITY frame payload size was %d; want 5", len(payload))}
 	}
+	//优先级帧带有五个字节的数据，前四个字节是所依赖的streamID,第五个字节是weight权重
 	v := binary.BigEndian.Uint32(payload[:4])
 	streamID := v & 0x7fffffff // mask off high bit
 	return &http2PriorityFrame{
@@ -3490,9 +3494,10 @@ func http2validPseudoPath(v string) bool {
 // pipe is a goroutine-safe io.Reader/io.Writer pair. It's like
 // io.Pipe except there are no PipeReader/PipeWriter halves, and the
 // underlying buffer is an interface. (io.Pipe is always unbuffered)
+//http2pipe顾名思义就是一个管道，读端可以从其中读取，写端可以往其中写入，其内部维护了一个buffer b(http2的实现是一个[][]bytes，r用来表示读的位置 w标识写的位置)
 type http2pipe struct {
 	mu       sync.Mutex
-	c        sync.Cond       // c.L lazily initialized to &p.mu
+	c        sync.Cond       // c.L lazily initialized to &p.mu //读空的时候等待写唤醒
 	b        http2pipeBuffer // nil when done reading 用来缓存写入的数据
 	unread   int             // bytes unread when done
 	err      error           // read error once empty. non-nil means closed.
@@ -3662,6 +3667,8 @@ var (
 var http2responseWriterStatePool = sync.Pool{
 	New: func() interface{} {
 		rws := &http2responseWriterState{}
+		//创建一个带有缓存的writer，writer是一个http2chunkWriter，其write方法会调用rws的writeChunk
+		//简而言之就是一个带有缓存的块写
 		rws.bw = bufio.NewWriterSize(http2chunkWriter{rws}, http2handlerChunkWriteSize)
 		return rws
 	},
@@ -4968,7 +4975,7 @@ func (sc *http2serverConn) processFrameFromReader(res http2readFrameResult) bool
 	sc.serveG.check()
 	err := res.err
 	if err != nil {
-		if err == http2ErrFrameTooLarge { //读取到的帧太大
+		if err == http2ErrFrameTooLarge { //读取到的帧太大,发送goAway帧
 			sc.goAway(http2ErrCodeFrameSize)
 			return true // goAway will close the loop
 		}
@@ -5164,7 +5171,7 @@ func (sc *http2serverConn) closeStream(st *http2stream, err error) {
 
 func (sc *http2serverConn) processSettings(f *http2SettingsFrame) error {
 	sc.serveG.check()
-	if f.IsAck() { //收到的是设置响应帧
+	if f.IsAck() { //收到的是设置响应帧，将unackedSettings减一
 		sc.unackedSettings--
 		if sc.unackedSettings < 0 {
 			// Why is the peer ACKing settings we never sent?
@@ -5174,12 +5181,14 @@ func (sc *http2serverConn) processSettings(f *http2SettingsFrame) error {
 		}
 		return nil
 	}
+	//如果设置项多余100个或者有重复设置则返回错误
 	if f.NumSettings() > 100 || f.HasDuplicates() {
 		// This isn't actually in the spec, but hang up on
 		// suspiciously large settings frames or those with
 		// duplicate entries.
 		return http2ConnectionError(http2ErrCodeProtocol)
 	}
+	//遍历配置项并设置配置
 	if err := f.ForeachSetting(sc.processSetting); err != nil {
 		return err
 	}
@@ -5187,7 +5196,7 @@ func (sc *http2serverConn) processSettings(f *http2SettingsFrame) error {
 	// acknowledged individually, even if multiple are received before the ACK.
 	//发送设置响应
 	sc.needToSendSettingsAck = true
-	sc.scheduleFrameWrite()
+	sc.scheduleFrameWrite() //发送设置帧的响应
 	return nil
 }
 
@@ -5414,8 +5423,9 @@ func (sc *http2serverConn) processHeaders(f *http2MetaHeadersFrame) error {
 	// send a trailer for an open one. If we already have a stream
 	// open, let it process its own HEADERS frame (trailers at this
 	// point, if it's valid).
+	//HEADERS帧用来创建一个新的流，如果已经存在一个开启的帧自行处理就ok
 	if st := sc.streams[f.StreamID]; st != nil {
-		if st.resetQueued {
+		if st.resetQueued { //流上发送了个RST_STREAM帧用来关闭流，所以忽略处理
 			// We're sending RST_STREAM to close the stream, so don't bother
 			// processing this frame.
 			return nil
@@ -5453,7 +5463,7 @@ func (sc *http2serverConn) processHeaders(f *http2MetaHeadersFrame) error {
 	// or REFUSED_STREAM.
 	//端点不能超过对方设置的限制，如果一个节点收到导致它所通告的并发流的限制的HEADERS帧，应该抛出错误
 	if sc.curClientStreams+1 > sc.advMaxStreams {
-		if sc.unackedSettings == 0 {
+		if sc.unackedSettings == 0 { //客户端已经受到了所有的设置
 			// They should know better.
 			return http2streamError(id, http2ErrCodeProtocol)
 		}
@@ -5462,6 +5472,7 @@ func (sc *http2serverConn) processHeaders(f *http2MetaHeadersFrame) error {
 		// this can't happen yet, because we don't yet provide
 		// a way for users to adjust server parameters at
 		// runtime.
+		//假设因为网络竞态，客户端没有收到最新的设置更新（虽然十几种不可能发生）
 		return http2streamError(id, http2ErrCodeRefusedStream)
 	}
 
@@ -5584,11 +5595,12 @@ func (sc *http2serverConn) newStream(id, pusherID uint32, state http2streamState
 	st.flow.add(sc.initialStreamSendWindowSize)
 	st.inflow.conn = &sc.inflow // link to conn-level counter
 	st.inflow.add(sc.srv.initialStreamRecvWindowSize())
-	if sc.hs.WriteTimeout != 0 {
+	if sc.hs.WriteTimeout != 0 { //流超时写一个RST_STREAM帧
 		st.writeDeadline = time.AfterFunc(sc.hs.WriteTimeout, st.onWriteTimeout)
 	}
 
 	sc.streams[id] = st
+	//为streamID分配一个node，node是writeSched用来调度写数据的节点
 	sc.writeSched.OpenStream(st.id, http2OpenStreamOptions{PusherID: pusherID})
 	if st.isPushed() {
 		sc.curPushedStreams++
@@ -5636,7 +5648,7 @@ func (sc *http2serverConn) newWriterAndRequest(st *http2stream, f *http2MetaHead
 		// HEAD requests can't have bodies
 		return nil, nil, http2streamError(f.StreamID, http2ErrCodeProtocol)
 	}
-
+	//设置常规的header
 	rp.header = make(Header)
 	for _, hf := range f.RegularFields() {
 		rp.header.Add(sc.canonicalHeader(hf.Name), hf.Value)
@@ -10097,6 +10109,7 @@ type http2priorityWriteScheduler struct {
 	queuePool http2writeQueuePool
 }
 
+//为streamID分配一个node，并放到node tree上
 func (ws *http2priorityWriteScheduler) OpenStream(streamID uint32, options http2OpenStreamOptions) {
 	// The stream may be currently idle but cannot be opened or closed.
 	if curr := ws.nodes[streamID]; curr != nil {
