@@ -4663,6 +4663,7 @@ func (sc *http2serverConn) writeDataFromHandler(stream *http2stream, data []byte
 // deadlock writing to sc.wantWriteFrameCh (which is only mildly
 // buffered and is read by serve itself). If you're on the serve
 // goroutine, call writeFrame instead.
+//将写请求发送到sc.wantWriteFrameCh 在sc.serve()中去写
 func (sc *http2serverConn) writeFrameFromHandler(wr http2FrameWriteRequest) error {
 	sc.serveG.checkNotOn() // NOT
 	select {
@@ -5323,7 +5324,7 @@ func (sc *http2serverConn) processData(f *http2DataFrame) error {
 	}
 	//将数据写入到body，body和Request共同关联一个pipe，handler可从Request读取数据
 	if f.Length > 0 {
-		// Check whether the client has flow control quota.
+		// Check whether the client has flow control quota.检查客户端是否有流量控制配额
 		if st.inflow.available() < int32(f.Length) {
 			return http2streamError(id, http2ErrCodeFlowControl)
 		}
@@ -5818,6 +5819,7 @@ func (sc *http2serverConn) writeHeaders(st *http2stream, headerData *http2writeR
 		// mutates it.
 		errc = http2errChanPool.Get().(chan error)
 	}
+	//将写请求发送到sc.wantWriteFrameCh
 	if err := sc.writeFrameFromHandler(http2FrameWriteRequest{
 		write:  headerData,
 		stream: st,
@@ -5894,6 +5896,7 @@ func (sc *http2serverConn) sendWindowUpdate(st *http2stream, n int) {
 }
 
 // st may be nil for conn-level
+//对流增加Window，同时通知对端
 func (sc *http2serverConn) sendWindowUpdate32(st *http2stream, n int32) {
 	sc.serveG.check()
 	if n == 0 {
