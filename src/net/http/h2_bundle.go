@@ -5274,6 +5274,7 @@ func (sc *http2serverConn) processData(f *http2DataFrame) error {
 	// with a stream error (Section 5.4.2) of type STREAM_CLOSED."
 	id := f.Header().StreamID
 	state, st := sc.state(id)
+	//检测流以及流的状态
 	if id == 0 || state == http2stateIdle {
 		// Section 5.1: "Receiving any frame other than HEADERS
 		// or PRIORITY on a stream in this state MUST be
@@ -5307,6 +5308,7 @@ func (sc *http2serverConn) processData(f *http2DataFrame) error {
 		}
 		return http2streamError(id, http2ErrCodeStreamClosed)
 	}
+	//如果读取的数据无法写入报错
 	if st.body == nil {
 		panic("internal error: should have a body in this state")
 	}
@@ -5319,6 +5321,7 @@ func (sc *http2serverConn) processData(f *http2DataFrame) error {
 		// DATA frame payload lengths that form the body.
 		return http2streamError(id, http2ErrCodeProtocol)
 	}
+	//将数据写入到body，body和Request共同关联一个pipe，handler可从Request读取数据
 	if f.Length > 0 {
 		// Check whether the client has flow control quota.
 		if st.inflow.available() < int32(f.Length) {
@@ -5380,6 +5383,7 @@ func (st *http2stream) endStream() {
 		st.body.CloseWithError(fmt.Errorf("request declared a Content-Length of %d but only wrote %d bytes",
 			st.declBodyBytes, st.bodyBytes))
 	} else {
+		//设置pipe的err，err!=nil拒绝Write
 		st.body.closeWithErrorAndCode(io.EOF, st.copyTrailersToHandlerRequest)
 		st.body.CloseWithError(io.EOF)
 	}
@@ -5497,6 +5501,7 @@ func (sc *http2serverConn) processHeaders(f *http2MetaHeadersFrame) error {
 	if st.reqTrailer != nil {
 		st.trailer = make(Header)
 	}
+	//如果帧没有结束流标志，则bodyopen存在pipe，后续流读取帧写入body中
 	st.body = req.Body.(*http2requestBody).pipe // may be nil
 	st.declBodyBytes = req.ContentLength
 
@@ -5518,7 +5523,7 @@ func (sc *http2serverConn) processHeaders(f *http2MetaHeadersFrame) error {
 	if sc.hs.ReadTimeout != 0 {
 		sc.conn.SetReadDeadline(time.Time{})
 	}
-
+	//开启routine，去处理这个流对应的请求
 	go sc.runHandler(rw, req, handler)
 	return nil
 }
@@ -6031,9 +6036,10 @@ func (rws *http2responseWriterState) declareTrailer(k string) {
 // writeChunk writes chunks from the bufio.Writer. But because
 // bufio.Writer may bypass its chunking, sometimes p may be
 // arbitrarily large.
-//
+//因为bufio.Writer可能会绕过其分块，所以有时p可能会任意大
 // writeChunk is also responsible (on the first chunk) for sending the
 // HEADER response.
+//其还负责（在第一个块上）发送HEADER响应
 func (rws *http2responseWriterState) writeChunk(p []byte) (n int, err error) {
 	if !rws.wroteHeader {
 		rws.writeHeader(200)
