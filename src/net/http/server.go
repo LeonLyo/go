@@ -2579,6 +2579,7 @@ type Server struct {
 	// automatically closed when the function returns.
 	// If TLSNextProto is not nil, HTTP/2 support is not enabled
 	// automatically.
+	//TLSNextProto是一个协议名称和TLS连接处理函数，即在ALPN协议发生升级时，接管TLS连接
 	TLSNextProto map[string]func(*Server, *tls.Conn, Handler)
 
 	// ConnState specifies an optional callback function that is

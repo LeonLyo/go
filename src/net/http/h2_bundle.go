@@ -2755,6 +2755,7 @@ func (fr *http2Framer) maxHeaderStringLen() int {
 // readMetaFrame returns 0 or more CONTINUATION frames from fr and
 // merge them into the provided hf and returns a MetaHeadersFrame
 // with the decoded hpack values.
+//如果头部没有读完即还有continue header那么readMetaFrame会继续读并整合到http2MetaHeadersFrame
 func (fr *http2Framer) readMetaFrame(hf *http2HeadersFrame) (*http2MetaHeadersFrame, error) {
 	if fr.AllowIllegalReads {
 		return nil, errors.New("illegal use of AllowIllegalReads with ReadMetaHeaders")
@@ -4482,7 +4483,7 @@ func (sc *http2serverConn) serve() {
 				break
 			}
 			sc.writeFrame(wr)
-		case res := <-sc.wroteFrameCh:
+		case res := <-sc.wroteFrameCh: //异步写会将结果发送到此
 			sc.wroteFrame(res)
 		case res := <-sc.readFrameCh:
 			if !sc.processFrameFromReader(res) {
@@ -4493,7 +4494,7 @@ func (sc *http2serverConn) serve() {
 				settingsTimer.Stop()
 				settingsTimer = nil
 			}
-		case m := <-sc.bodyReadCh:
+		case m := <-sc.bodyReadCh: //送body中读取了数据，需要更新inflow的窗口大小，inflow是从对端读取数据的window，来控制接受的数据量
 			sc.noteBodyRead(m.st, m.n)
 		case msg := <-sc.serveMsgCh:
 			switch v := msg.(type) {
@@ -4840,7 +4841,7 @@ func (sc *http2serverConn) wroteFrame(res http2frameWriteResult) {
 			// RST_STREAM with an error code of NO_ERROR after sending
 			// a complete response.
 			sc.resetStream(http2streamError(st.id, http2ErrCodeNo))
-		case http2stateHalfClosedRemote:
+		case http2stateHalfClosedRemote: //对端关闭，本端也结束了，那么关闭流
 			sc.closeStream(st, http2errHandlerComplete)
 		}
 	} else {
@@ -4878,6 +4879,7 @@ func (sc *http2serverConn) scheduleFrameWrite() {
 		return
 	}
 	sc.inFrameScheduleLoop = true
+	//有异步处理的帧说明缓存数据过多，暂停写入
 	for !sc.writingFrameAsync {
 		if sc.needToSendGoAway {
 			sc.needToSendGoAway = false
@@ -5116,6 +5118,7 @@ func (sc *http2serverConn) processWindowUpdate(f *http2WindowUpdateFrame) error 
 	return nil
 }
 
+//关闭流处理
 func (sc *http2serverConn) processResetStream(f *http2RSTStreamFrame) error {
 	sc.serveG.check()
 
@@ -5135,6 +5138,7 @@ func (sc *http2serverConn) processResetStream(f *http2RSTStreamFrame) error {
 	return nil
 }
 
+//流计数-1，删除流，接触和StreamID绑定的node
 func (sc *http2serverConn) closeStream(st *http2stream, err error) {
 	sc.serveG.check()
 	if st.state == http2stateIdle || st.state == http2stateClosed {
@@ -5482,6 +5486,7 @@ func (sc *http2serverConn) processHeaders(f *http2MetaHeadersFrame) error {
 	}
 
 	initialState := http2stateOpen
+	//如果Header帧有结束标志，流状态初始化为http2stateHalfClosedRemote，在handler向流中写response结束的时候会根据http2stateHalfClosedRemote状态关闭流
 	if f.StreamEnded() {
 		initialState = http2stateHalfClosedRemote
 	}
@@ -5507,6 +5512,7 @@ func (sc *http2serverConn) processHeaders(f *http2MetaHeadersFrame) error {
 	st.declBodyBytes = req.ContentLength
 
 	handler := sc.handler.ServeHTTP
+	//太长被截断
 	if f.Truncated {
 		// Their header list was too long. Send a 431 error.
 		handler = http2handleHeaderListTooLong
@@ -5860,7 +5866,7 @@ type http2bodyReadMsg struct {
 // Notes that the handler for the given stream ID read n bytes of its body
 // and schedules flow control tokens to be sent.
 func (sc *http2serverConn) noteBodyReadFromHandler(st *http2stream, n int, err error) {
-	sc.serveG.checkNotOn() // NOT on没有在主流程的携程上
+	sc.serveG.checkNotOn() // NOT on没有在主流程的协程上
 	if n > 0 {
 		select {
 		case sc.bodyReadCh <- http2bodyReadMsg{st, n}:
@@ -6043,6 +6049,7 @@ func (rws *http2responseWriterState) declareTrailer(k string) {
 // writeChunk is also responsible (on the first chunk) for sending the
 // HEADER response.
 //其还负责（在第一个块上）发送HEADER响应
+//http2中ResponesWriter的Write最终会走到这里
 func (rws *http2responseWriterState) writeChunk(p []byte) (n int, err error) {
 	if !rws.wroteHeader {
 		rws.writeHeader(200)

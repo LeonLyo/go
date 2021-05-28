@@ -29,6 +29,7 @@ type WaitGroup struct {
 }
 
 // state returns pointers to the state and sema fields stored within wg.state1.
+//如果64位系统，前两个uint32是状态值，第三个是信号量的值，否则第一个数据是信号量，后两个是状态值
 func (wg *WaitGroup) state() (statep *uint64, semap *uint32) {
 	if uintptr(unsafe.Pointer(&wg.state1))%8 == 0 {
 		return (*uint64)(unsafe.Pointer(&wg.state1)), &wg.state1[2]

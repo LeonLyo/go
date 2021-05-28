@@ -922,6 +922,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 
 	// assistG is the G to charge for this allocation, or nil if
 	// GC is not currently active.
+	//如果开启后台gc，那么需要根据分配的size做一定的辅助标记
 	var assistG *g
 	if gcBlackenEnabled != 0 {
 		// Charge the current user G for this allocation.
@@ -955,7 +956,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 	dataSize := size
 	c := gomcache()
 	var x unsafe.Pointer
-	noscan := typ == nil || typ.ptrdata == 0
+	noscan := typ == nil || typ.ptrdata == 0 //标识此类型没有中不存在指针
 	if size <= maxSmallSize {
 		if noscan && size < maxTinySize {
 			// Tiny allocator.
@@ -1022,14 +1023,14 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 			}
 			size = maxTinySize
 		} else {
-			var sizeclass uint8
+			var sizeclass uint8 //获取分配的sizeclass smallSizeDiv用来进行8字节成倍计算
 			if size <= smallSizeMax-8 {
 				sizeclass = size_to_class8[(size+smallSizeDiv-1)/smallSizeDiv]
 			} else {
 				sizeclass = size_to_class128[(size-smallSizeMax+largeSizeDiv-1)/largeSizeDiv]
 			}
 			size = uintptr(class_to_size[sizeclass])
-			spc := makeSpanClass(sizeclass, noscan)
+			spc := makeSpanClass(sizeclass, noscan) //前7位代表sizeclass，后1位代表是否scan，通过此计算可以快速在c.alloc中找到对应的span
 			span := c.alloc[spc]
 			v := nextFreeFast(span)
 			if v == 0 {

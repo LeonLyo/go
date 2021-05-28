@@ -36,7 +36,7 @@ type mcache struct {
 	local_tinyallocs uintptr // number of tiny allocs not counted in other stats
 
 	// The rest is not accessed on every malloc.
-
+	//alloc缓存当前可用的span 偶数索引为nosan的span(无指针数据)，计数为scan的span
 	alloc [numSpanClasses]*mspan // spans to allocate from, indexed by spanClass
 
 	stackcache [_NumStackOrders]stackfreelist
