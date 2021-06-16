@@ -188,7 +188,7 @@ type Request struct {
 	// requires setting Body.
 	//
 	// For server requests, it is unused.
-	GetBody func() (io.ReadCloser, error)
+	GetBody func() (io.ReadCloser, error)//GetBody返回一个body的拷贝，它适用于请求客户端，服务端不用，当一个重定向需要不止一次的读取这个body的时候，使用GetBody持续设置body
 
 	// ContentLength records the length of the associated content.
 	// The value -1 indicates that the length is unknown.
@@ -557,6 +557,7 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 	// is not given, use the host from the request URL.
 	//
 	// Clean the host, in case it arrives with unexpected stuff in it.
+	//首先去Host中寻找目标host，没有从URL中寻找，cleanHost是为了避免引入其他非预期的东西
 	host := cleanHost(r.Host)
 	if host == "" {
 		if r.URL == nil {
@@ -596,14 +597,22 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 		bw = bufio.NewWriter(w)
 		w = bw
 	}
-
-	_, err = fmt.Fprintf(w, "%s %s HTTP/1.1\r\n", valueOrDefault(r.Method, "GET"), ruri)
+	/*完整的请求
+		POST / HTTP/1.1
+		Host localhost:8000
+		User-Agent: xxxx
+		...
+		...
+		--空行
+		xxxxxxxxxxx body
+	*/
+	_, err = fmt.Fprintf(w, "%s %s HTTP/1.1\r\n", valueOrDefault(r.Method, "GET"), ruri)//写入请求行
 	if err != nil {
 		return err
 	}
 
 	// Header lines
-	_, err = fmt.Fprintf(w, "Host: %s\r\n", host)
+	_, err = fmt.Fprintf(w, "Host: %s\r\n", host)//写入请求头的host域
 	if err != nil {
 		return err
 	}
@@ -618,7 +627,7 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 		userAgent = r.Header.Get("User-Agent")
 	}
 	if userAgent != "" {
-		_, err = fmt.Fprintf(w, "User-Agent: %s\r\n", userAgent)
+		_, err = fmt.Fprintf(w, "User-Agent: %s\r\n", userAgent) //写入请求头的User-Agent域
 		if err != nil {
 			return err
 		}
@@ -632,24 +641,24 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 	if err != nil {
 		return err
 	}
-	err = tw.writeHeader(w, trace)
+	err = tw.writeHeader(w, trace) //写入转换过程中确定的header 注入 tansfer-encoding content-length tailer etc。
 	if err != nil {
 		return err
 	}
 
-	err = r.Header.writeSubset(w, reqWriteExcludeHeader, trace)
+	err = r.Header.writeSubset(w, reqWriteExcludeHeader, trace)//写入header
 	if err != nil {
 		return err
 	}
 
 	if extraHeaders != nil {
-		err = extraHeaders.write(w, trace)
+		err = extraHeaders.write(w, trace) //写入附加的header
 		if err != nil {
 			return err
 		}
 	}
 
-	_, err = io.WriteString(w, "\r\n")
+	_, err = io.WriteString(w, "\r\n") //写入空行
 	if err != nil {
 		return err
 	}

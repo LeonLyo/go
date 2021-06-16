@@ -59,7 +59,7 @@ type Client struct {
 	// Transport specifies the mechanism by which individual
 	// HTTP requests are made.
 	// If nil, DefaultTransport is used.
-	Transport RoundTripper
+	Transport RoundTripper //底层用来处理请求
 
 	// CheckRedirect specifies the policy for handling redirects.
 	// If CheckRedirect is not nil, the client calls it before

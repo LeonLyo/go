@@ -92,7 +92,23 @@ func newTransferWriter(r interface{}) (t *transferWriter, err error) {
 		t.BodyCloser = rr.Body
 		t.ContentLength = rr.outgoingLength()
 		if t.ContentLength < 0 && len(t.TransferEncoding) == 0 && t.shouldSendChunkedRequestBody() {
-			t.TransferEncoding = []string{"chunked"}
+			t.TransferEncoding = []string{"chunked"}//如果对body长度不确定，进行分块传输
+			/*
+				HTTP/1.1 200 OK
+				Content-Type: text/plain
+				Transfer-Encoding: chunked
+				Trailer: Expires //如果有tailer加入tailer Trailer 是一个响应首部，允许发送方在分块发送的消息后面添加额外的元信息，这些元信息可能是随着消息主体的发送动态生成的，比如消息的完整性校验，消息的数字签名，或者消息经过处理之后的最终状态等。
+
+				7\r\n     --要发送的数据长度
+				Mozilla\r\n  --真实的数据内容
+				9\r\n
+				Developer\r\n
+				7\r\n
+				Network\r\n
+				0\r\n 		--代表数据发送完毕
+				Expires: Wed, 21 Oct 2015 07:28:00 GMT\r\n  --tailer动态信息
+				\r\n
+			 */
 		}
 		// If there's a body, conservatively flush the headers
 		// to any bufio.Writer we're writing to, just in case

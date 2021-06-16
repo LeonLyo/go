@@ -64,19 +64,20 @@ const DefaultMaxIdleConnsPerHost = 2
 // This may leave many open connections when accessing many hosts.
 // This behavior can be managed using Transport's CloseIdleConnections method
 // and the MaxIdleConnsPerHost and DisableKeepAlives fields.
-//
+//默认情况下，Transport对连接进行缓存，可以通过CloseIdleConnections方法关闭缓存的空闲连接，或者通过MaxIdleConnsPerHost和DisableKeepAlives成员变量去禁止连接缓存
 // Transports should be reused instead of created as needed.
 // Transports are safe for concurrent use by multiple goroutines.
-//
+//Transports应该被复用而不是需要的时候创建，Transports是并发安全的
 // A Transport is a low-level primitive for making HTTP and HTTPS requests.
 // For high-level functionality, such as cookies and redirects, see Client.
-//
+//Transport是发送http/https请求的低级原语
 // Transport uses HTTP/1.1 for HTTP URLs and either HTTP/1.1 or HTTP/2
 // for HTTPS URLs, depending on whether the server supports HTTP/2,
 // and how the Transport is configured. The DefaultTransport supports HTTP/2.
 // To explicitly enable HTTP/2 on a transport, use golang.org/x/net/http2
 // and call ConfigureTransport. See the package docs for more about HTTP/2.
-//
+//Transport对http url使用http1.1处理，对https url使用1.1或者2，这依赖于服务是否支持http2以及Transport被如何配置,DefaultTransport支持http2
+//为了显式的使用HTTP/2，使用golang.org/x/net/http2并且调用ConfigureTransport
 // Responses with status codes in the 1xx range are either handled
 // automatically (100 expect-continue) or ignored. The one
 // exception is HTTP status code 101 (Switching Protocols), which is
@@ -92,6 +93,7 @@ const DefaultMaxIdleConnsPerHost = 2
 // entry. If the idempotency key value is a zero-length slice, the
 // request is treated as idempotent but the header is not sent on the
 // wire.
+//如果请求是幂等的，Transport在遇到网络错误时会重试请求，如果http请求方法是GET, HEAD, OPTIONS, or TRACE或者header中有"Idempotency-Key" or "X-Idempotency-Key"条目就认为请求是幂等的，
 type Transport struct {
 	idleMu       sync.Mutex
 	closeIdle    bool                                // user has requested to close all idle conns
@@ -504,7 +506,7 @@ func (t *Transport) roundTrip(req *Request) (*Response, error) {
 	}
 	scheme := req.URL.Scheme
 	isHTTP := scheme == "http" || scheme == "https"
-	if isHTTP {
+	if isHTTP {//如果是http请求验证header的key和value是否合法
 		for k, vv := range req.Header {
 			if !httpguts.ValidHeaderFieldName(k) {
 				req.closeBody()
@@ -521,9 +523,9 @@ func (t *Transport) roundTrip(req *Request) (*Response, error) {
 
 	origReq := req
 	cancelKey := cancelKey{origReq}
-	req = setupRewindBody(req)
+	req = setupRewindBody(req)//此方法其实就是对body进行了一个didRead的包装，用于标识body是否被读取过，如果没有读取过不需要倒带body
 
-	if altRT := t.alternateRoundTripper(req); altRT != nil {
+	if altRT := t.alternateRoundTripper(req); altRT != nil { //是否有可选的RoundTripper，使用可选的RoundTripper
 		if resp, err := altRT.RoundTrip(req); err != ErrSkipAltProtocol {
 			return resp, err
 		}
@@ -537,18 +539,18 @@ func (t *Transport) roundTrip(req *Request) (*Response, error) {
 		req.closeBody()
 		return nil, &badStringError{"unsupported protocol scheme", scheme}
 	}
-	if req.Method != "" && !validMethod(req.Method) {
+	if req.Method != "" && !validMethod(req.Method) {  //验证method是否合法
 		req.closeBody()
 		return nil, fmt.Errorf("net/http: invalid method %q", req.Method)
 	}
-	if req.URL.Host == "" {
+	if req.URL.Host == "" { //host不存在不合法
 		req.closeBody()
 		return nil, errors.New("http: no Host in request URL")
 	}
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-ctx.Done():  //请求取消则退出
 			req.closeBody()
 			return nil, ctx.Err()
 		default:
@@ -566,7 +568,7 @@ func (t *Transport) roundTrip(req *Request) (*Response, error) {
 		// host (for http or https), the http proxy, or the http proxy
 		// pre-CONNECTed to https server. In any case, we'll be ready
 		// to send it requests.
-		pconn, err := t.getConn(treq, cm)
+		pconn, err := t.getConn(treq, cm) //获取底层的持久化连接
 		if err != nil {
 			t.setReqCanceler(cancelKey, nil)
 			req.closeBody()
@@ -579,9 +581,9 @@ func (t *Transport) roundTrip(req *Request) (*Response, error) {
 			t.setReqCanceler(cancelKey, nil) // not cancelable with CancelRequest
 			resp, err = pconn.alt.RoundTrip(req)
 		} else {
-			resp, err = pconn.roundTrip(treq)
+			resp, err = pconn.roundTrip(treq) //连接处理请求
 		}
-		if err == nil {
+		if err == nil { //处理成功返回response，退出
 			resp.Request = origReq
 			return resp, nil
 		}
@@ -883,7 +885,7 @@ func (t *Transport) maxIdleConnsPerHost() int {
 // If pconn is no longer needed or not in a good state, tryPutIdleConn returns
 // an error explaining why it wasn't registered.
 // tryPutIdleConn does not close pconn. Use putOrCloseIdleConn instead for that.
-func (t *Transport) tryPutIdleConn(pconn *persistConn) error {
+func (t *Transport) tryPutIdleConn(pconn *persistConn) error {  //persistConn会在处理完一个请求的相应调用tryPutIdleConn
 	if t.DisableKeepAlives || t.MaxIdleConnsPerHost < 0 {
 		return errKeepAlivesDisabled
 	}
@@ -898,6 +900,7 @@ func (t *Transport) tryPutIdleConn(pconn *persistConn) error {
 	// HTTP/2 (pconn.alt != nil) connections do not come out of the idle list,
 	// because multiple goroutines can use them simultaneously.
 	// If this is an HTTP/2 connection being “returned,” we're done.
+	//http2连接不会从空闲列表中取出，因为http2实现了真正的多路复用
 	if pconn.alt != nil && t.idleLRU.m[pconn] != nil {
 		return nil
 	}
@@ -907,7 +910,7 @@ func (t *Transport) tryPutIdleConn(pconn *persistConn) error {
 	// Chrome calls this socket late binding.
 	// See https://insouciant.org/tech/connection-management-in-chromium/.)
 	key := pconn.cacheKey
-	if q, ok := t.idleConnWait[key]; ok {
+	if q, ok := t.idleConnWait[key]; ok { //如果有等待连接的那么从等待列表中取出wantConn将此pconn传递过去
 		done := false
 		if pconn.alt == nil {
 			// HTTP/1.
@@ -924,6 +927,7 @@ func (t *Transport) tryPutIdleConn(pconn *persistConn) error {
 			// Can hand the same pconn to everyone in the waiting list,
 			// and we still won't be done: we want to put it in the idle
 			// list unconditionally, for any future clients too.
+			//http2中所有请求可以共用一个连接，所以可以一并处理所有的等待
 			for q.len() > 0 {
 				w := q.popFront()
 				w.tryDeliver(pconn, nil)
@@ -956,7 +960,7 @@ func (t *Transport) tryPutIdleConn(pconn *persistConn) error {
 	}
 	t.idleConn[key] = append(idles, pconn)
 	t.idleLRU.add(pconn)
-	if t.MaxIdleConns != 0 && t.idleLRU.len() > t.MaxIdleConns {
+	if t.MaxIdleConns != 0 && t.idleLRU.len() > t.MaxIdleConns { //如果有最大空闲连接限制，并且以及超过限制，那么根据LRU策略关闭一个连接
 		oldest := t.idleLRU.removeOldest()
 		oldest.close(errTooManyIdle)
 		t.removeIdleConnLocked(oldest)
@@ -965,7 +969,7 @@ func (t *Transport) tryPutIdleConn(pconn *persistConn) error {
 	// Set idle timer, but only for HTTP/1 (pconn.alt == nil).
 	// The HTTP/2 implementation manages the idle timer itself
 	// (see idleConnTimeout in h2_bundle.go).
-	if t.IdleConnTimeout > 0 && pconn.alt == nil {
+	if t.IdleConnTimeout > 0 && pconn.alt == nil { //如果有连接空闲超时设置并且是http1连接，那么设置/重置超时定时器，时间到了就自动关闭连接并在空闲列表中清除连接
 		if pconn.idleTimer != nil {
 			pconn.idleTimer.Reset(t.IdleConnTimeout)
 		} else {
@@ -1344,7 +1348,7 @@ func (t *Transport) getConn(treq *transportRequest, cm connectMethod) (pc *persi
 	t.setReqCanceler(treq.cancelKey, func(err error) { cancelc <- err })
 
 	// Queue for permission to dial.
-	t.queueForDial(w)
+	t.queueForDial(w) //连接创建成功后，会将w的pc设置，并关闭channel w.ready
 
 	// Wait for completion or cancellation.
 	select {
@@ -1389,7 +1393,7 @@ func (t *Transport) getConn(treq *transportRequest, cm connectMethod) (pc *persi
 // Once w receives permission to dial, it will do so in a separate goroutine.
 func (t *Transport) queueForDial(w *wantConn) {
 	w.beforeDial()
-	if t.MaxConnsPerHost <= 0 {
+	if t.MaxConnsPerHost <= 0 { //如果没有设置缓存，直接拨号
 		go t.dialConnFor(w)
 		return
 	}
@@ -1397,7 +1401,7 @@ func (t *Transport) queueForDial(w *wantConn) {
 	t.connsPerHostMu.Lock()
 	defer t.connsPerHostMu.Unlock()
 
-	if n := t.connsPerHost[w.key]; n < t.MaxConnsPerHost {
+	if n := t.connsPerHost[w.key]; n < t.MaxConnsPerHost { //如果对应的host上的连接数<host上的最大连接数，那么继续拨号，否则将请求放在对应host上的等待队列上
 		if t.connsPerHost == nil {
 			t.connsPerHost = make(map[connectMethodKey]int)
 		}
@@ -1997,8 +2001,9 @@ func (pc *persistConn) mapRoundTripError(req *transportRequest, startBytesWritte
 // errCallerOwnsConn is an internal sentinel error used when we hand
 // off a writable response.Body to the caller. We use this to prevent
 // closing a net.Conn that is now owned by the caller.
+//此错误用于标识persistConn在close()的时候，不要关闭底层的conn，因为它在被调用方使用
 var errCallerOwnsConn = errors.New("read loop ending; caller owns writable underlying conn")
-
+//persistConn开启一个协程处理read操作
 func (pc *persistConn) readLoop() {
 	closeErr := errReadLoopExiting // default value, if not changed below
 	defer func() {
@@ -2329,7 +2334,7 @@ func (b *readWriteCloserBody) Read(p []byte) (n int, err error) {
 type nothingWrittenError struct {
 	error
 }
-
+//运行在一个conn上的循环写协程处理写请求
 func (pc *persistConn) writeLoop() {
 	defer close(pc.writeLoopDone)
 	for {
@@ -2519,7 +2524,7 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 		continueCh = make(chan struct{}, 1)
 	}
 
-	if pc.t.DisableKeepAlives && !req.wantsClose() {
+	if pc.t.DisableKeepAlives && !req.wantsClose() { //禁用keepalive并且请求想关闭，则设置header Connection:close
 		req.extraHeaders().Set("Connection", "close")
 	}
 
@@ -2539,7 +2544,7 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 	// request body.
 	startBytesWritten := pc.nwrite
 	writeErrCh := make(chan error, 1)
-	pc.writech <- writeRequest{req, writeErrCh, continueCh}
+	pc.writech <- writeRequest{req, writeErrCh, continueCh} //开启一个新连接的时候，会在此连接上开启一个读协程和一个写协程，写协程会通过pc.writech接受写请求
 
 	resc := make(chan responseAndError)
 	pc.reqch <- requestAndChan{
@@ -2557,15 +2562,15 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 	for {
 		testHookWaitResLoop()
 		select {
-		case err := <-writeErrCh:
+		case err := <-writeErrCh:  //写协程处理完写请求后，会将err写回到 writeRequest的ch即writeErrCh(err可以为nil也可以不为nil)
 			if debugRoundTrip {
 				req.logf("writeErrCh resv: %T/%#v", err, err)
 			}
-			if err != nil {
+			if err != nil { //如果写请求出现错误，则返回给上层
 				pc.close(fmt.Errorf("write error: %v", err))
 				return nil, pc.mapRoundTripError(req, startBytesWritten, err)
 			}
-			if d := pc.t.ResponseHeaderTimeout; d > 0 {
+			if d := pc.t.ResponseHeaderTimeout; d > 0 { //如果写请求成功，那么发起一个等待服务端回应的定时器
 				if debugRoundTrip {
 					req.logf("starting timer for %v", d)
 				}
@@ -2578,7 +2583,7 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 				req.logf("closech recv: %T %#v", pc.closed, pc.closed)
 			}
 			return nil, pc.mapRoundTripError(req, startBytesWritten, pc.closed)
-		case <-respHeaderTimer:
+		case <-respHeaderTimer:  //请求等待服务端回应超时，则返回错误
 			if debugRoundTrip {
 				req.logf("timeout waiting for response headers.")
 			}
@@ -2646,7 +2651,7 @@ func (pc *persistConn) closeLocked(err error) {
 		// Close HTTP/1 (pc.alt == nil) connection.
 		// HTTP/2 closes its connection itself.
 		if pc.alt == nil {
-			if err != errCallerOwnsConn {
+			if err != errCallerOwnsConn { //如果调用方在占用底层conn，则不关闭conn
 				pc.conn.Close()
 			}
 			close(pc.closech)
