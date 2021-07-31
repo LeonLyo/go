@@ -143,7 +143,7 @@ const maxRW = 1 << 30
 
 // Read implements io.Reader.
 func (fd *FD) Read(p []byte) (int, error) {
-	if err := fd.readLock(); err != nil {
+	if err := fd.readLock(); err != nil { //获取读锁，下面调用prepareRead会将pollDesc中的rg清0，如果此时没有锁，而rg又有别的g，此时会导致g被唤不醒吧。。。
 		return 0, err
 	}
 	defer fd.readUnlock()
@@ -166,7 +166,7 @@ func (fd *FD) Read(p []byte) (int, error) {
 		if err != nil {
 			n = 0
 			if err == syscall.EAGAIN && fd.pd.pollable() {
-				if err = fd.pd.waitRead(fd.isFile); err == nil {
+				if err = fd.pd.waitRead(fd.isFile); err == nil { //waitRead会检测pollDesc错误，比如超时等等
 					continue
 				}
 			}

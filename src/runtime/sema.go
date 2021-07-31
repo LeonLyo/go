@@ -39,7 +39,7 @@ import (
 // for a test that exercises this.
 type semaRoot struct {
 	lock  mutex
-	treap *sudog // root of balanced tree of unique waiters.
+	treap *sudog // root of balanced tree of unique waiters. sudo.pre指向左子树，sudo.next指向右子树
 	nwait uint32 // Number of waiters. Read w/o the lock.
 }
 
@@ -102,7 +102,7 @@ func semacquire1(addr *uint32, lifo bool, profile semaProfileFlags, skipframes i
 	}
 
 	// Easy case.
-	if cansemacquire(addr) {
+	if cansemacquire(addr) { //检查信号量是否可以获取
 		return
 	}
 
@@ -140,8 +140,8 @@ func semacquire1(addr *uint32, lifo bool, profile semaProfileFlags, skipframes i
 		}
 		// Any semrelease after the cansemacquire knows we're waiting
 		// (we set nwait above), so go to sleep.
-		root.queue(addr, s, lifo)
-		goparkunlock(&root.lock, waitReasonSemacquire, traceEvGoBlockSync, 4+skipframes)
+		root.queue(addr, s, lifo)                                                        //将sudog加入到二叉树中
+		goparkunlock(&root.lock, waitReasonSemacquire, traceEvGoBlockSync, 4+skipframes) //park协程等待唤醒
 		if s.ticket != 0 || cansemacquire(addr) {
 			break
 		}
@@ -163,7 +163,7 @@ func semrelease1(addr *uint32, handoff bool, skipframes int) {
 	// Easy case: no waiters?
 	// This check must happen after the xadd, to avoid a missed wakeup
 	// (see loop in semacquire).
-	if atomic.Load(&root.nwait) == 0 {
+	if atomic.Load(&root.nwait) == 0 { //如果没有等待信号者返回
 		return
 	}
 
@@ -175,7 +175,7 @@ func semrelease1(addr *uint32, handoff bool, skipframes int) {
 		unlock(&root.lock)
 		return
 	}
-	s, t0 := root.dequeue(addr)
+	s, t0 := root.dequeue(addr) //获取等待此信号量的一个协程
 	if s != nil {
 		atomic.Xadd(&root.nwait, -1)
 	}
@@ -191,7 +191,7 @@ func semrelease1(addr *uint32, handoff bool, skipframes int) {
 		if handoff && cansemacquire(addr) {
 			s.ticket = 1
 		}
-		readyWithTime(s, 5+skipframes)
+		readyWithTime(s, 5+skipframes) //唤醒goroutine
 		if s.ticket == 1 && getg().m.locks == 0 {
 			// Direct G handoff
 			// readyWithTime has added the waiter G as runnext in the
@@ -214,7 +214,7 @@ func semrelease1(addr *uint32, handoff bool, skipframes int) {
 	}
 }
 
-func semroot(addr *uint32) *semaRoot {
+func semroot(addr *uint32) *semaRoot { //这里地址左移3位是因为8位对齐吗
 	return &semtable[(uintptr(unsafe.Pointer(addr))>>3)%semTabSize].root
 }
 
@@ -242,7 +242,7 @@ func (root *semaRoot) queue(addr *uint32, s *sudog, lifo bool) {
 	for t := *pt; t != nil; t = *pt {
 		if t.elem == unsafe.Pointer(addr) {
 			// Already have addr in list.
-			if lifo {
+			if lifo { //标识放在队头
 				// Substitute s in t's place in treap.
 				*pt = s
 				s.ticket = t.ticket
@@ -269,11 +269,11 @@ func (root *semaRoot) queue(addr *uint32, s *sudog, lifo bool) {
 			} else {
 				// Add s to end of t's wait list.
 				if t.waittail == nil {
-					t.waitlink = s
+					t.waitlink = s //waitlink指向链表的下一个sugo
 				} else {
 					t.waittail.waitlink = s
 				}
-				t.waittail = s
+				t.waittail = s //waittail总是指向链表的最后一个sugo
 				s.waitlink = nil
 			}
 			return

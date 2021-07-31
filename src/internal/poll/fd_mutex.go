@@ -10,7 +10,7 @@ import "sync/atomic"
 // lifetime of an fd and serializes access to Read, Write and Close
 // methods on FD.
 type fdMutex struct {
-	state uint64
+	state uint64 //  |--20bit为等待写的计数--|--20bit为等待读的计数--|--20bit为fd引用计数--|--3bit为状态--|
 	rsema uint32
 	wsema uint32
 }
@@ -53,11 +53,11 @@ const overflowMsg = "too many concurrent operations on a single file or socket (
 func (mu *fdMutex) incref() bool {
 	for {
 		old := atomic.LoadUint64(&mu.state)
-		if old&mutexClosed != 0 {
+		if old&mutexClosed != 0 { //fdMutex被设置关闭态，代表不能在获取锁
 			return false
 		}
-		new := old + mutexRef
-		if new&mutexRefMask == 0 {
+		new := old + mutexRef      //增加一个持有者
+		if new&mutexRefMask == 0 { //如果溢出panic
 			panic(overflowMsg)
 		}
 		if atomic.CompareAndSwapUint64(&mu.state, old, new) {
@@ -71,24 +71,24 @@ func (mu *fdMutex) incref() bool {
 func (mu *fdMutex) increfAndClose() bool {
 	for {
 		old := atomic.LoadUint64(&mu.state)
-		if old&mutexClosed != 0 {
+		if old&mutexClosed != 0 { //fd被关闭，返回
 			return false
 		}
 		// Mark as closed and acquire a reference.
-		new := (old | mutexClosed) + mutexRef
+		new := (old | mutexClosed) + mutexRef //状态置为关闭，并增加一个引用
 		if new&mutexRefMask == 0 {
 			panic(overflowMsg)
 		}
 		// Remove all read and write waiters.
-		new &^= mutexRMask | mutexWMask
+		new &^= mutexRMask | mutexWMask //清除读/写等待计数
 		if atomic.CompareAndSwapUint64(&mu.state, old, new) {
 			// Wake all read and write waiters,
 			// they will observe closed flag after wakeup.
-			for old&mutexRMask != 0 {
+			for old&mutexRMask != 0 { //遍历所有读等待，唤醒等待读的协程
 				old -= mutexRWait
 				runtime_Semrelease(&mu.rsema)
 			}
-			for old&mutexWMask != 0 {
+			for old&mutexWMask != 0 { //遍历所有写等待，唤醒等待写的协程
 				old -= mutexWWait
 				runtime_Semrelease(&mu.wsema)
 			}
@@ -134,24 +134,24 @@ func (mu *fdMutex) rwlock(read bool) bool {
 			return false
 		}
 		var new uint64
-		if old&mutexBit == 0 {
+		if old&mutexBit == 0 { //如果读/写锁没有被设置
 			// Lock is free, acquire it.
-			new = (old | mutexBit) + mutexRef
+			new = (old | mutexBit) + mutexRef //设置锁
 			if new&mutexRefMask == 0 {
 				panic(overflowMsg)
 			}
-		} else {
+		} else { //如果读/写锁已经被设置
 			// Wait for lock.
-			new = old + mutexWait
+			new = old + mutexWait //增加一个读/写等待者
 			if new&mutexMask == 0 {
 				panic(overflowMsg)
 			}
 		}
 		if atomic.CompareAndSwapUint64(&mu.state, old, new) {
-			if old&mutexBit == 0 {
+			if old&mutexBit == 0 { //如果之前没有加锁，说明此时加锁成功，返回true
 				return true
 			}
-			runtime_Semacquire(mutexSema)
+			runtime_Semacquire(mutexSema) //如果之前已经被加锁了，等待获取信号量，然后再次尝试加锁
 			// The signaller has subtracted mutexWait.
 		}
 	}
@@ -159,6 +159,7 @@ func (mu *fdMutex) rwlock(read bool) bool {
 
 // unlock removes a reference from mu and unlocks mu.
 // It reports whether there is no remaining reference.
+//返回值代表是还有等待引用
 func (mu *fdMutex) rwunlock(read bool) bool {
 	var mutexBit, mutexWait, mutexMask uint64
 	var mutexSema *uint32
@@ -175,16 +176,16 @@ func (mu *fdMutex) rwunlock(read bool) bool {
 	}
 	for {
 		old := atomic.LoadUint64(&mu.state)
-		if old&mutexBit == 0 || old&mutexRefMask == 0 {
+		if old&mutexBit == 0 || old&mutexRefMask == 0 { //如果之前没有锁，却要释放锁，panic
 			panic("inconsistent poll.fdMutex")
 		}
 		// Drop lock, drop reference and wake read waiter if present.
-		new := (old &^ mutexBit) - mutexRef
-		if old&mutexMask != 0 {
+		new := (old &^ mutexBit) - mutexRef //清除锁位，减少一个引用计数
+		if old&mutexMask != 0 {             //如果读/写存在等待者，-1
 			new -= mutexWait
 		}
 		if atomic.CompareAndSwapUint64(&mu.state, old, new) {
-			if old&mutexMask != 0 {
+			if old&mutexMask != 0 { //如果有等待者，此时有等待信号量，释放信号量
 				runtime_Semrelease(mutexSema)
 			}
 			return new&(mutexClosed|mutexRefMask) == mutexClosed

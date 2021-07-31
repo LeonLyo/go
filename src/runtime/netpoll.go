@@ -73,9 +73,9 @@ type pollDesc struct {
 	everr   bool    // marks event scanning error happened
 	user    uint32  // user settable cookie
 	rseq    uintptr // protects from stale read timers
-	rg      uintptr // pdReady, pdWait, G waiting for read or nil
+	rg      uintptr // pdReady, pdWait, G waiting for read or nil 这里存放几个标识pdReady、pdWait或者是等待读取数据的g地址
 	rt      timer   // read deadline timer (set if rt.f != nil)
-	rd      int64   // read deadline
+	rd      int64   // read deadline  负数代表超时
 	wseq    uintptr // protects from stale write timers
 	wg      uintptr // pdReady, pdWait, G waiting for write or nil
 	wt      timer   // write deadline timer
@@ -130,14 +130,15 @@ func poll_runtime_isPollServerDescriptor(fd uintptr) bool {
 
 //go:linkname poll_runtime_pollOpen internal/poll.runtime_pollOpen
 func poll_runtime_pollOpen(fd uintptr) (*pollDesc, int) {
-	pd := pollcache.alloc()
+	pd := pollcache.alloc() //获取一个pollDesc
 	lock(&pd.lock)
-	if pd.wg != 0 && pd.wg != pdReady {
+	if pd.wg != 0 && pd.wg != pdReady { //此pollDesc有等待写的协程
 		throw("runtime: blocked write on free polldesc")
 	}
-	if pd.rg != 0 && pd.rg != pdReady {
+	if pd.rg != 0 && pd.rg != pdReady { //此pollDesc有等待读的协程
 		throw("runtime: blocked read on free polldesc")
 	}
+	//对pollDesc进行初始化
 	pd.fd = fd
 	pd.closing = false
 	pd.everr = false
@@ -150,7 +151,7 @@ func poll_runtime_pollOpen(fd uintptr) (*pollDesc, int) {
 	unlock(&pd.lock)
 
 	var errno int32
-	errno = netpollopen(fd, pd)
+	errno = netpollopen(fd, pd) //epoll_ctl(add...)
 	return pd, int(errno)
 }
 
@@ -159,13 +160,13 @@ func poll_runtime_pollClose(pd *pollDesc) {
 	if !pd.closing {
 		throw("runtime: close polldesc w/o unblock")
 	}
-	if pd.wg != 0 && pd.wg != pdReady {
+	if pd.wg != 0 && pd.wg != pdReady { //此pollDesc有等待写的协程
 		throw("runtime: blocked write on closing polldesc")
 	}
-	if pd.rg != 0 && pd.rg != pdReady {
+	if pd.rg != 0 && pd.rg != pdReady { //此pollDesc有等待读的协程
 		throw("runtime: blocked read on closing polldesc")
 	}
-	netpollclose(pd.fd)
+	netpollclose(pd.fd) //epoll_ctl(delete...)
 	pollcache.free(pd)
 }
 
@@ -178,11 +179,11 @@ func (c *pollCache) free(pd *pollDesc) {
 
 //go:linkname poll_runtime_pollReset internal/poll.runtime_pollReset
 func poll_runtime_pollReset(pd *pollDesc, mode int) int {
-	err := netpollcheckerr(pd, int32(mode))
+	err := netpollcheckerr(pd, int32(mode)) //检测此pollDesc是否有错误发生
 	if err != 0 {
 		return err
 	}
-	if mode == 'r' {
+	if mode == 'r' { //将pollDesc的rg/wg重置，原则上这个操作应该在上层调用加锁 i think
 		pd.rg = 0
 	} else if mode == 'w' {
 		pd.wg = 0
@@ -191,7 +192,7 @@ func poll_runtime_pollReset(pd *pollDesc, mode int) int {
 }
 
 //go:linkname poll_runtime_pollWait internal/poll.runtime_pollWait
-func poll_runtime_pollWait(pd *pollDesc, mode int) int {
+func poll_runtime_pollWait(pd *pollDesc, mode int) int { //不是执行的epoll_wait，而是获取fd上是否有对应的事件就绪，如果没有那么阻塞，直到被唤醒
 	err := netpollcheckerr(pd, int32(mode))
 	if err != 0 {
 		return err
@@ -200,7 +201,7 @@ func poll_runtime_pollWait(pd *pollDesc, mode int) int {
 	if GOOS == "solaris" || GOOS == "illumos" || GOOS == "aix" {
 		netpollarm(pd, mode)
 	}
-	for !netpollblock(pd, int32(mode), false) {
+	for !netpollblock(pd, int32(mode), false) { //等待ioready
 		err = netpollcheckerr(pd, int32(mode))
 		if err != 0 {
 			return err
@@ -228,7 +229,7 @@ func poll_runtime_pollSetDeadline(pd *pollDesc, d int64, mode int) {
 		return
 	}
 	rd0, wd0 := pd.rd, pd.wd
-	combo0 := rd0 > 0 && rd0 == wd0
+	combo0 := rd0 > 0 && rd0 == wd0 //读写等待是否时间一样
 	if d > 0 {
 		d += nanotime()
 		if d <= 0 {
@@ -243,12 +244,12 @@ func poll_runtime_pollSetDeadline(pd *pollDesc, d int64, mode int) {
 	if mode == 'w' || mode == 'r'+'w' {
 		pd.wd = d
 	}
-	combo := pd.rd > 0 && pd.rd == pd.wd
+	combo := pd.rd > 0 && pd.rd == pd.wd //combo1和combo的作用其实是为了后续是启用一个timer还是两个，如果rd==wd的情况下，只需要启用一个rt就可以搞定
 	rtf := netpollReadDeadline
 	if combo {
 		rtf = netpollDeadline
 	}
-	if pd.rt.f == nil {
+	if pd.rt.f == nil { //timer没有被设置过
 		if pd.rd > 0 {
 			pd.rt.f = rtf
 			// Copy current seq into the timer arg.
@@ -258,7 +259,8 @@ func poll_runtime_pollSetDeadline(pd *pollDesc, d int64, mode int) {
 			pd.rt.seq = pd.rseq
 			resettimer(&pd.rt, pd.rd)
 		}
-	} else if pd.rd != rd0 || combo != combo0 {
+	} else if pd.rd != rd0 || combo != combo0 { //如果timer之前被设置过，后又重新设置，为了避免新旧交替出现的问题，seq++
+		//pd.rd != rd0 说明rd时间变了，timer要变更，如果rd没有边。但是combo != combo0，说明wd变了，或者从跟rd一样变为不一样，亦或者跟rd不一样变为一样，此时rtf(timer调用函数)要改变
 		pd.rseq++ // invalidate current timers
 		if pd.rd > 0 {
 			modtimer(&pd.rt, pd.rd, 0, rtf, pd, pd.rseq)
@@ -304,7 +306,7 @@ func poll_runtime_pollSetDeadline(pd *pollDesc, d int64, mode int) {
 }
 
 //go:linkname poll_runtime_pollUnblock internal/poll.runtime_pollUnblock
-func poll_runtime_pollUnblock(pd *pollDesc) {
+func poll_runtime_pollUnblock(pd *pollDesc) { //相当于预准备关闭，该重置重置，该唤醒唤醒，而后通过poll_runtime_pollClose回收
 	lock(&pd.lock)
 	if pd.closing {
 		throw("runtime: unblock on closing polldesc")
@@ -361,7 +363,7 @@ func netpollcheckerr(pd *pollDesc, mode int32) int {
 	if pd.closing {
 		return 1 // ErrFileClosing or ErrNetClosing
 	}
-	if (mode == 'r' && pd.rd < 0) || (mode == 'w' && pd.wd < 0) {
+	if (mode == 'r' && pd.rd < 0) || (mode == 'w' && pd.wd < 0) { //rd/wd 为负数证明超时
 		return 2 // ErrTimeout
 	}
 	// Report an event scanning error only on a read event.
@@ -374,7 +376,7 @@ func netpollcheckerr(pd *pollDesc, mode int32) int {
 }
 
 func netpollblockcommit(gp *g, gpp unsafe.Pointer) bool {
-	r := atomic.Casuintptr((*uintptr)(gpp), pdWait, uintptr(unsafe.Pointer(gp)))
+	r := atomic.Casuintptr((*uintptr)(gpp), pdWait, uintptr(unsafe.Pointer(gp))) //将gpp的wait态替换成阻塞的g的地址
 	if r {
 		// Bump the count of goroutines waiting for the poller.
 		// The scheduler uses this to decide whether to block
@@ -400,14 +402,14 @@ func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 	// set the gpp semaphore to WAIT
 	for {
 		old := *gpp
-		if old == pdReady {
+		if old == pdReady { //如果已经ready则返回true
 			*gpp = 0
 			return true
 		}
-		if old != 0 {
+		if old != 0 { //如果old即不是ready也不为0(初始态)，说明old已经处于wait态
 			throw("runtime: double wait")
 		}
-		if atomic.Casuintptr(gpp, 0, pdWait) {
+		if atomic.Casuintptr(gpp, 0, pdWait) { //置为pdWait代表有协程要等待了，在gopark中做pdwait和g地址的置换，如果中途有逻辑将pdwait更改了，那么置换失败，置换失败的情况下，协程不会被阻塞，详情看gopark逻辑
 			break
 		}
 	}
@@ -415,7 +417,7 @@ func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 	// need to recheck error states after setting gpp to WAIT
 	// this is necessary because runtime_pollUnblock/runtime_pollSetDeadline/deadlineimpl
 	// do the opposite: store to closing/rd/wd, membarrier, load of rg/wg
-	if waitio || netpollcheckerr(pd, mode) == 0 {
+	if waitio || netpollcheckerr(pd, mode) == 0 { //在gopark携程的时候，会调用netpollblockcommit函数
 		gopark(netpollblockcommit, unsafe.Pointer(gpp), waitReasonIOWait, traceEvGoBlockNet, 5)
 	}
 	// be careful to not lose concurrent READY notification
@@ -434,7 +436,7 @@ func netpollunblock(pd *pollDesc, mode int32, ioready bool) *g {
 
 	for {
 		old := *gpp
-		if old == pdReady {
+		if old == pdReady { //如果标识为ready，则说明没有等待事件的g
 			return nil
 		}
 		if old == 0 && !ioready {
@@ -447,10 +449,10 @@ func netpollunblock(pd *pollDesc, mode int32, ioready bool) *g {
 			new = pdReady
 		}
 		if atomic.Casuintptr(gpp, old, new) {
-			if old == pdReady || old == pdWait {
+			if old == pdReady || old == pdWait { //如果old为pdWait，说明要等待的协程还没陷入等待
 				old = 0
 			}
-			return (*g)(unsafe.Pointer(old))
+			return (*g)(unsafe.Pointer(old)) //如果old==0，那么*g=nil
 		}
 	}
 }
@@ -459,11 +461,11 @@ func netpolldeadlineimpl(pd *pollDesc, seq uintptr, read, write bool) {
 	lock(&pd.lock)
 	// Seq arg is seq when the timer was set.
 	// If it's stale, ignore the timer event.
-	currentSeq := pd.rseq
+	currentSeq := pd.rseq //pd现在的序列号  param seq是设置timer时候的序列号
 	if !read {
 		currentSeq = pd.wseq
 	}
-	if seq != currentSeq {
+	if seq != currentSeq { //如果两者不同，说明timer已经被重置或者在重置
 		// The descriptor was reused or timers were reset.
 		unlock(&pd.lock)
 		return
@@ -473,9 +475,9 @@ func netpolldeadlineimpl(pd *pollDesc, seq uintptr, read, write bool) {
 		if pd.rd <= 0 || pd.rt.f == nil {
 			throw("runtime: inconsistent read deadline")
 		}
-		pd.rd = -1
+		pd.rd = -1                                       //rd置为-1 代表超时
 		atomic.StorepNoWB(unsafe.Pointer(&pd.rt.f), nil) // full memory barrier between store to rd and load of rg in netpollunblock
-		rg = netpollunblock(pd, 'r', false)
+		rg = netpollunblock(pd, 'r', false)              //将等待的g取出来
 	}
 	var wg *g
 	if write {
@@ -488,7 +490,7 @@ func netpolldeadlineimpl(pd *pollDesc, seq uintptr, read, write bool) {
 	}
 	unlock(&pd.lock)
 	if rg != nil {
-		netpollgoready(rg, 0)
+		netpollgoready(rg, 0) //将g唤醒
 	}
 	if wg != nil {
 		netpollgoready(wg, 0)

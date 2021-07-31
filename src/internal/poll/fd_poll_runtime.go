@@ -18,7 +18,8 @@ import (
 //go:linkname runtimeNano runtime.nanotime
 func runtimeNano() int64
 
-func runtime_pollServerInit()
+//下面函数的实现在netpoll.go
+func runtime_pollServerInit() // poll_runtime_pollServerInit
 func runtime_pollOpen(fd uintptr) (uintptr, int)
 func runtime_pollClose(ctx uintptr)
 func runtime_pollWait(ctx uintptr, mode int) int
@@ -35,8 +36,8 @@ type pollDesc struct {
 var serverInit sync.Once
 
 func (pd *pollDesc) init(fd *FD) error {
-	serverInit.Do(runtime_pollServerInit)
-	ctx, errno := runtime_pollOpen(uintptr(fd.Sysfd))
+	serverInit.Do(runtime_pollServerInit)             //初始化epoll实例
+	ctx, errno := runtime_pollOpen(uintptr(fd.Sysfd)) //将fd添加到epoll中
 	if errno != 0 {
 		if ctx != 0 {
 			runtime_pollUnblock(ctx)
@@ -44,7 +45,7 @@ func (pd *pollDesc) init(fd *FD) error {
 		}
 		return errnoErr(syscall.Errno(errno))
 	}
-	pd.runtimeCtx = ctx
+	pd.runtimeCtx = ctx //ctx是pollDesc类型指针
 	return nil
 }
 
@@ -52,7 +53,7 @@ func (pd *pollDesc) close() {
 	if pd.runtimeCtx == 0 {
 		return
 	}
-	runtime_pollClose(pd.runtimeCtx)
+	runtime_pollClose(pd.runtimeCtx) //释放pollDesc，并将pollDesc中的fd从epoll中移除
 	pd.runtimeCtx = 0
 }
 
@@ -64,7 +65,7 @@ func (pd *pollDesc) evict() {
 	runtime_pollUnblock(pd.runtimeCtx)
 }
 
-func (pd *pollDesc) prepare(mode int, isFile bool) error {
+func (pd *pollDesc) prepare(mode int, isFile bool) error { //将pollDesc上的rg/wg重置回0
 	if pd.runtimeCtx == 0 {
 		return nil
 	}
@@ -80,7 +81,7 @@ func (pd *pollDesc) prepareWrite(isFile bool) error {
 	return pd.prepare('w', isFile)
 }
 
-func (pd *pollDesc) wait(mode int, isFile bool) error {
+func (pd *pollDesc) wait(mode int, isFile bool) error { //阻塞等待io事件就绪
 	if pd.runtimeCtx == 0 {
 		return errors.New("waiting for unsupported file type")
 	}
@@ -100,7 +101,7 @@ func (pd *pollDesc) waitCanceled(mode int) {
 	if pd.runtimeCtx == 0 {
 		return
 	}
-	runtime_pollWaitCanceled(pd.runtimeCtx, mode)
+	runtime_pollWaitCanceled(pd.runtimeCtx, mode) //阻塞等待io事件就绪，取消不进行error判断
 }
 
 func (pd *pollDesc) pollable() bool {

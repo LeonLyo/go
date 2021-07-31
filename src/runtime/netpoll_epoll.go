@@ -25,7 +25,7 @@ var (
 )
 
 func netpollinit() {
-	epfd = epollcreate1(_EPOLL_CLOEXEC)
+	epfd = epollcreate1(_EPOLL_CLOEXEC) //epoll_create(size)中size只是对内核的一个建议，现在已经废弃，所以使用epollcreate1函数，flag _EPOLL_CLOEXEC标识fork子进程后关闭此fd
 	if epfd < 0 {
 		epfd = epollcreate(1024)
 		if epfd < 0 {
@@ -34,7 +34,7 @@ func netpollinit() {
 		}
 		closeonexec(epfd)
 	}
-	r, w, errno := nonblockingPipe()
+	r, w, errno := nonblockingPipe() //创建一个pipe管道并设置为nonblock，后续如果想唤醒epoll的时候，可以向写端写入数据，读端就触发事件
 	if errno != 0 {
 		println("runtime: pipe failed with", -errno)
 		throw("runtime: pipe failed")
@@ -43,7 +43,7 @@ func netpollinit() {
 		events: _EPOLLIN,
 	}
 	*(**uintptr)(unsafe.Pointer(&ev.data)) = &netpollBreakRd
-	errno = epollctl(epfd, _EPOLL_CTL_ADD, r, &ev)
+	errno = epollctl(epfd, _EPOLL_CTL_ADD, r, &ev) //将读端加入到epoll中
 	if errno != 0 {
 		println("runtime: epollctl failed with", -errno)
 		throw("runtime: epollctl failed")
@@ -59,7 +59,7 @@ func netpollIsPollDescriptor(fd uintptr) bool {
 func netpollopen(fd uintptr, pd *pollDesc) int32 {
 	var ev epollevent
 	ev.events = _EPOLLIN | _EPOLLOUT | _EPOLLRDHUP | _EPOLLET
-	*(**pollDesc)(unsafe.Pointer(&ev.data)) = pd
+	*(**pollDesc)(unsafe.Pointer(&ev.data)) = pd //将pollDesc作为ev.data传入 pollDesc中有fd的相关信息
 	return -epollctl(epfd, _EPOLL_CTL_ADD, int32(fd), &ev)
 }
 
@@ -136,7 +136,7 @@ retry:
 			continue
 		}
 
-		if *(**uintptr)(unsafe.Pointer(&ev.data)) == &netpollBreakRd {
+		if *(**uintptr)(unsafe.Pointer(&ev.data)) == &netpollBreakRd { //如果是管道的读事件
 			if ev.events != _EPOLLIN {
 				println("runtime: netpoll: break fd ready for", ev.events)
 				throw("runtime: netpoll: break fd ready for something unexpected")
@@ -151,7 +151,7 @@ retry:
 			continue
 		}
 
-		var mode int32
+		var mode int32 //声明了个int32，相加的是r/w的ASCII码,这么设计是?
 		if ev.events&(_EPOLLIN|_EPOLLRDHUP|_EPOLLHUP|_EPOLLERR) != 0 {
 			mode += 'r'
 		}
