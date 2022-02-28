@@ -26,9 +26,9 @@ type mstats struct { //内存的统计信息
 	alloc       uint64 // bytes allocated and not yet freed
 	total_alloc uint64 // bytes allocated (even if freed)
 	sys         uint64 // bytes obtained from system (should be sum of xxx_sys below, no locking, approximate)
-	nlookup     uint64 // number of pointer lookups (unused)
-	nmalloc     uint64 // number of mallocs
-	nfree       uint64 // number of frees
+	nlookup     uint64 // number of pointer lookups (unused)指针查找的次数
+	nmalloc     uint64 // number of mallocs 分配内存次数
+	nfree       uint64 // number of frees 释放内存次数
 
 	// Statistics about malloc heap.
 	// Updated atomically, or with the world stopped.

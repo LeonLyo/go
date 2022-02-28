@@ -214,7 +214,7 @@ func panicmem() {
 
 // Create a new deferred function fn with siz bytes of arguments.
 // The compiler turns a defer statement into a call to this.
-//go:nosplit
+//go:nosplit  创建defer的函数
 func deferproc(siz int32, fn *funcval) { // arguments of fn follow fn
 	gp := getg()
 	if gp.m.curg != gp {
@@ -886,6 +886,7 @@ func reflectcallSave(p *_panic, fn, arg unsafe.Pointer, argsize uint32) {
 }
 
 // The implementation of the predeclared function panic.
+//panic执行函数
 func gopanic(e interface{}) {
 	gp := getg()
 	if gp.m.curg != gp {
@@ -937,6 +938,7 @@ func gopanic(e interface{}) {
 		// If defer was started by earlier panic or Goexit (and, since we're back here, that triggered a new panic),
 		// take defer off list. An earlier panic will not continue running, but we will make sure below that an
 		// earlier Goexit does continue running.
+		//如果d已经是开启状态，说明这个defer已经被之前的panic/goexit调用，那么defer不会再执行，之前的panic被设置为aborted
 		if d.started {
 			if d._panic != nil {
 				d._panic.aborted = true
@@ -962,6 +964,7 @@ func gopanic(e interface{}) {
 		// Record the panic that is running the defer.
 		// If there is a new panic during the deferred call, that panic
 		// will find d in the list and will mark d._panic (this panic) aborted.
+		//保存正在运行的panic，如果defer中又触发panic的话，这个panic就会被标记为aborted
 		d._panic = (*_panic)(noescape(unsafe.Pointer(&p)))
 
 		done := true
@@ -971,7 +974,9 @@ func gopanic(e interface{}) {
 				addOneOpenDeferFrame(gp, 0, nil)
 			}
 		} else {
+			//0是个临时变量，在调用getargp的时候，会放到栈区的
 			p.argp = unsafe.Pointer(getargp(0))
+			//调用延迟函数， 如果是recovery调用gorecover
 			reflectcall(nil, unsafe.Pointer(d.fn), deferArgs(d), uint32(d.siz), uint32(d.siz))
 		}
 		p.argp = nil

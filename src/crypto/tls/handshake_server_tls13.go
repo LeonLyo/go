@@ -117,23 +117,23 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 	}
 
 	if len(hs.clientHello.compressionMethods) != 1 ||
-		hs.clientHello.compressionMethods[0] != compressionNone {
+		hs.clientHello.compressionMethods[0] != compressionNone { //压缩算法，不启用，如果启用协商失败
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: TLS 1.3 client supports illegal compression methods")
 	}
 
-	hs.hello.random = make([]byte, 32)
+	hs.hello.random = make([]byte, 32) //生成32字节随机数
 	if _, err := io.ReadFull(c.config.rand(), hs.hello.random); err != nil {
 		c.sendAlert(alertInternalError)
 		return err
 	}
 
-	if len(hs.clientHello.secureRenegotiation) != 0 {
+	if len(hs.clientHello.secureRenegotiation) != 0 { //安全重协商必须为空
 		c.sendAlert(alertHandshakeFailure)
 		return errors.New("tls: initial handshake had non-empty renegotiation extension")
 	}
 
-	if hs.clientHello.earlyData {
+	if hs.clientHello.earlyData { //如果有相同地址的不同服务器接收了这个早期数据，就无法处理了
 		// See RFC 8446, Section 4.2.10 for the complicated behavior required
 		// here. The scenario is that a different server at our address offered
 		// to accept early data in the past, which we can't handle. For now, all
@@ -207,13 +207,13 @@ GroupSelection:
 		c.sendAlert(alertInternalError)
 		return errors.New("tls: CurvePreferences includes unsupported curve")
 	}
-	params, err := generateECDHEParameters(c.config.rand(), selectedGroup)
+	params, err := generateECDHEParameters(c.config.rand(), selectedGroup) //根据selectedGroup(曲线)生成公私钥对，并保存相关的曲线参数
 	if err != nil {
 		c.sendAlert(alertInternalError)
 		return err
 	}
-	hs.hello.serverShare = keyShare{group: selectedGroup, data: params.PublicKey()}
-	hs.sharedKey = params.SharedKey(clientKeyShare.data)
+	hs.hello.serverShare = keyShare{group: selectedGroup, data: params.PublicKey()} //将曲线ID和公钥发送给对端，对端根据公钥和自留的私钥以及曲线参数可以生成KeyShare即对称密钥
+	hs.sharedKey = params.SharedKey(clientKeyShare.data)                            //本端根据对端的公钥信息和自己的私钥信息以及曲线参数生成KeyShare
 	if hs.sharedKey == nil {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: invalid client key share")
@@ -223,10 +223,10 @@ GroupSelection:
 	return nil
 }
 
-func (hs *serverHandshakeStateTLS13) checkForResumption() error {
+func (hs *serverHandshakeStateTLS13) checkForResumption() error { //检测是否为会话恢复
 	c := hs.c
 
-	if c.config.SessionTicketsDisabled {
+	if c.config.SessionTicketsDisabled { //如果服务端禁用了会话票据则返回
 		return nil
 	}
 
@@ -370,7 +370,7 @@ func (hs *serverHandshakeStateTLS13) pickCertificate() error {
 		}
 		return err
 	}
-	hs.sigAlg, err = selectSignatureScheme(c.vers, certificate, hs.clientHello.supportedSignatureAlgorithms)
+	hs.sigAlg, err = selectSignatureScheme(c.vers, certificate, hs.clientHello.supportedSignatureAlgorithms) //根据tls版本，证书支持的签名算法和客户端支持的签名算法筛选出签名算法
 	if err != nil {
 		// getCertificate returned a certificate that is unsupported or
 		// incompatible with the client's signature algorithms.
@@ -579,14 +579,14 @@ func (hs *serverHandshakeStateTLS13) sendServerCertificate() error {
 		return nil
 	}
 
-	if hs.requestClientCert() {
+	if hs.requestClientCert() { //需要客户端请求证书，则发送客户端请求消息
 		// Request a client certificate
 		certReq := new(certificateRequestMsgTLS13)
 		certReq.ocspStapling = true
 		certReq.scts = true
 		certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms
 		if c.config.ClientCAs != nil {
-			certReq.certificateAuthorities = c.config.ClientCAs.Subjects()
+			certReq.certificateAuthorities = c.config.ClientCAs.Subjects() //证书的签发者，意思是服务端请求客户端发送由这些ca证书签发的证书，客户端如果没有找到由这些ca签发的证书就会发送一个空证书
 		}
 
 		hs.transcript.Write(certReq.marshal())
@@ -595,7 +595,7 @@ func (hs *serverHandshakeStateTLS13) sendServerCertificate() error {
 		}
 	}
 
-	certMsg := new(certificateMsgTLS13)
+	certMsg := new(certificateMsgTLS13) //发送服务器证书
 
 	certMsg.certificate = *hs.cert
 	certMsg.scts = hs.clientHello.scts && len(hs.cert.SignedCertificateTimestamps) > 0
@@ -606,7 +606,7 @@ func (hs *serverHandshakeStateTLS13) sendServerCertificate() error {
 		return err
 	}
 
-	certVerifyMsg := new(certificateVerifyMsg)
+	certVerifyMsg := new(certificateVerifyMsg) //发送服务器证书验证消息
 	certVerifyMsg.hasSignatureAlgorithm = true
 	certVerifyMsg.signatureAlgorithm = hs.sigAlg
 
@@ -620,7 +620,7 @@ func (hs *serverHandshakeStateTLS13) sendServerCertificate() error {
 	if sigType == signatureRSAPSS {
 		signOpts = &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: sigHash}
 	}
-	sig, err := hs.cert.PrivateKey.(crypto.Signer).Sign(c.config.rand(), signed, signOpts)
+	sig, err := hs.cert.PrivateKey.(crypto.Signer).Sign(c.config.rand(), signed, signOpts) //用服务器私钥签名消息
 	if err != nil {
 		public := hs.cert.PrivateKey.(crypto.Signer).Public()
 		if rsaKey, ok := public.(*rsa.PublicKey); ok && sigType == signatureRSAPSS &&

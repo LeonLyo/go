@@ -12,9 +12,9 @@ import (
 
 // CertPool is a set of certificates.
 type CertPool struct {
-	bySubjectKeyId map[string][]int
-	byName         map[string][]int
-	certs          []*Certificate
+	bySubjectKeyId map[string][]int //证书主题ID(Certificate.SubjectKeyId)映射证书切片的索引
+	byName         map[string][]int //证书主题(Certificate.RawSubject)映射证书切片的索引
+	certs          []*Certificate   //存放证书的切片
 }
 
 // NewCertPool returns a new, empty CertPool.
@@ -67,7 +67,7 @@ func SystemCertPool() (*CertPool, error) {
 
 // findPotentialParents returns the indexes of certificates in s which might
 // have signed cert. The caller must not modify the returned slice.
-func (s *CertPool) findPotentialParents(cert *Certificate) []int {
+func (s *CertPool) findPotentialParents(cert *Certificate) []int { //根据证书cert的签发信息(发行人），从证书池中搜寻是否存在主题是这个发行信息的根证书
 	if s == nil {
 		return nil
 	}

@@ -213,7 +213,7 @@ type VerifyOptions struct {
 	// perform when checking a given certificate's name constraints. If
 	// zero, a sensible default is used. This limit prevents pathological
 	// certificates from consuming excessive amounts of CPU time when
-	// validating. It does not apply to the platform verifier.
+	// validating. It does not apply to the platform verifier. 校验证书名字约束的比较最大次数，用来保护坏证书过分消耗cpu
 	MaxConstraintComparisions int
 }
 
@@ -576,7 +576,7 @@ func (c *Certificate) isValid(certType int, currentChain []*Certificate, opts *V
 
 	if len(currentChain) > 0 {
 		child := currentChain[len(currentChain)-1]
-		if !bytes.Equal(child.RawIssuer, c.RawSubject) {
+		if !bytes.Equal(child.RawIssuer, c.RawSubject) { //如果当前证书链的主题不是本证书的签发者，错误
 			return CertificateInvalidError{c, NameMismatch, ""}
 		}
 	}
@@ -585,7 +585,7 @@ func (c *Certificate) isValid(certType int, currentChain []*Certificate, opts *V
 	if now.IsZero() {
 		now = time.Now()
 	}
-	if now.Before(c.NotBefore) {
+	if now.Before(c.NotBefore) { //校验证书时间
 		return CertificateInvalidError{
 			Cert:   c,
 			Reason: Expired,
@@ -612,16 +612,16 @@ func (c *Certificate) isValid(certType int, currentChain []*Certificate, opts *V
 		}
 		leaf = currentChain[0]
 	}
-
+	//只有中间证书和根证书才校验名字约束
 	checkNameConstraints := (certType == intermediateCertificate || certType == rootCertificate) && c.hasNameConstraints()
-	if checkNameConstraints && leaf.commonNameAsHostname() {
+	if checkNameConstraints && leaf.commonNameAsHostname() { //如果启用命名约束，但是叶子证书没有SAN扩展，CN是hostname
 		// This is the deprecated, legacy case of depending on the commonName as
 		// a hostname. We don't enforce name constraints against the CN, but
 		// VerifyHostname will look for hostnames in there if there are no SANs.
 		// In order to ensure VerifyHostname will not accept an unchecked name,
 		// return an error here.
 		return CertificateInvalidError{c, NameConstraintsWithoutSANs, ""}
-	} else if checkNameConstraints && leaf.hasSANExtension() {
+	} else if checkNameConstraints && leaf.hasSANExtension() { //叶子证书有SAN扩展，则解析SAN扩展
 		err := forEachSAN(leaf.getSANExtension(), func(tag int, data []byte) error {
 			switch tag {
 			case nameTypeEmail:
@@ -707,11 +707,11 @@ func (c *Certificate) isValid(certType int, currentChain []*Certificate, opts *V
 	// keyUsage, and a keyUsage containing a flag indicating that the RSA
 	// encryption key could only be used for Diffie-Hellman key agreement.
 
-	if certType == intermediateCertificate && (!c.BasicConstraintsValid || !c.IsCA) {
+	if certType == intermediateCertificate && (!c.BasicConstraintsValid || !c.IsCA) { //如果证书为中间证书，但是不是一个CA证书则报错
 		return CertificateInvalidError{c, NotAuthorizedToSign, ""}
 	}
 
-	if c.BasicConstraintsValid && c.MaxPathLen >= 0 {
+	if c.BasicConstraintsValid && c.MaxPathLen >= 0 { //如果设置基础约束，并且设置了最大路径长度，如果中间证书超过最大长度则报错
 		numIntermediates := len(currentChain) - 1
 		if numIntermediates > c.MaxPathLen {
 			return CertificateInvalidError{c, TooManyIntermediates, ""}
@@ -760,20 +760,20 @@ func (c *Certificate) Verify(opts VerifyOptions) (chains [][]*Certificate, err e
 	if opts.Roots == nil && runtime.GOOS == "windows" {
 		return c.systemVerify(&opts)
 	}
-
+	//没有根证书则使用系统证书
 	if opts.Roots == nil {
 		opts.Roots = systemRootsPool()
 		if opts.Roots == nil {
 			return nil, SystemRootsError{systemRootsErr}
 		}
 	}
-
+	//校验证书有效性，如时间信息，SAN以及证书类型和证书链长度
 	err = c.isValid(leafCertificate, nil, &opts)
 	if err != nil {
 		return
 	}
 
-	if len(opts.DNSName) > 0 {
+	if len(opts.DNSName) > 0 { //如果配置DNS则验证DNS名字
 		err = c.VerifyHostname(opts.DNSName)
 		if err != nil {
 			return
@@ -781,7 +781,7 @@ func (c *Certificate) Verify(opts VerifyOptions) (chains [][]*Certificate, err e
 	}
 
 	var candidateChains [][]*Certificate
-	if opts.Roots.contains(c) {
+	if opts.Roots.contains(c) { //如果根证书中存在此证书
 		candidateChains = append(candidateChains, []*Certificate{c})
 	} else {
 		if candidateChains, err = c.buildChains(nil, []*Certificate{c}, nil, &opts); err != nil {
@@ -834,7 +834,7 @@ func (c *Certificate) buildChains(cache map[*Certificate][][]*Certificate, curre
 	)
 
 	considerCandidate := func(certType int, candidate *Certificate) {
-		for _, cert := range currentChain {
+		for _, cert := range currentChain { //如果当前证书链中存在此证书返回
 			if cert.Equal(candidate) {
 				return
 			}
@@ -844,12 +844,12 @@ func (c *Certificate) buildChains(cache map[*Certificate][][]*Certificate, curre
 			sigChecks = new(int)
 		}
 		*sigChecks++
-		if *sigChecks > maxChainSignatureChecks {
+		if *sigChecks > maxChainSignatureChecks { //校验最大签名校验次数
 			err = errors.New("x509: signature check attempts limit reached while verifying certificate chain")
 			return
 		}
 
-		if err := c.CheckSignatureFrom(candidate); err != nil {
+		if err := c.CheckSignatureFrom(candidate); err != nil { //通过candidate校验c的签名合法性
 			if hintErr == nil {
 				hintErr = err
 				hintCert = candidate

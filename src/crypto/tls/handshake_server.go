@@ -142,7 +142,7 @@ func (c *Conn) readClientHello() (*clientHelloMsg, error) {
 		return nil, unexpectedMessageError(clientHello, msg)
 	}
 
-	if c.config.GetConfigForClient != nil {
+	if c.config.GetConfigForClient != nil { //如果指定了GetConfigForClient函数
 		chi := clientHelloInfo(c, clientHello)
 		if newConfig, err := c.config.GetConfigForClient(chi); err != nil {
 			c.sendAlert(alertInternalError)
@@ -153,11 +153,11 @@ func (c *Conn) readClientHello() (*clientHelloMsg, error) {
 		}
 	}
 
-	clientVersions := clientHello.supportedVersions
+	clientVersions := clientHello.supportedVersions //client支持的tls版本
 	if len(clientHello.supportedVersions) == 0 {
 		clientVersions = supportedVersionsFromMax(clientHello.vers)
 	}
-	c.vers, ok = c.config.mutualVersion(clientVersions)
+	c.vers, ok = c.config.mutualVersion(clientVersions) //服务端配置的tls跟client支持的tls版本中最高版本
 	if !ok {
 		c.sendAlert(alertProtocolVersion)
 		return nil, fmt.Errorf("tls: client offered only unsupported versions: %x", clientVersions)

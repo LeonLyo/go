@@ -585,7 +585,7 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 	}
 	c.input.Reset(nil)
 
-	// Read header, payload.
+	// Read header, payload. //从conn中读取一个record
 	if err := c.readFromUntil(c.conn, recordHeaderLen); err != nil {
 		// RFC 8446, Section 6.1 suggests that EOF without an alertCloseNotify
 		// is an error, but popular web sites seem to do this, so we accept it
@@ -599,7 +599,7 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 		return err
 	}
 	hdr := c.rawInput.Bytes()[:recordHeaderLen]
-	typ := recordType(hdr[0])
+	typ := recordType(hdr[0]) //获取record类型
 
 	// No valid TLS record has a type of 0x80, however SSLv2 handshakes
 	// start with a uint16 length where the MSB is set and the first record
@@ -610,14 +610,14 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 		return c.in.setErrorLocked(c.newRecordHeaderError(nil, "unsupported SSLv2 handshake received"))
 	}
 
-	vers := uint16(hdr[1])<<8 | uint16(hdr[2])
-	n := int(hdr[3])<<8 | int(hdr[4])
+	vers := uint16(hdr[1])<<8 | uint16(hdr[2]) //获取支持的tls版本
+	n := int(hdr[3])<<8 | int(hdr[4])          //n为record payload的长度
 	if c.haveVers && c.vers != VersionTLS13 && vers != c.vers {
 		c.sendAlert(alertProtocolVersion)
 		msg := fmt.Sprintf("received record with version %x when expecting version %x", vers, c.vers)
 		return c.in.setErrorLocked(c.newRecordHeaderError(nil, msg))
 	}
-	if !c.haveVers {
+	if !c.haveVers { //如果还没有进行版本协商，判断first record的类型
 		// First message, be extra suspicious: this might not be a TLS
 		// client. Bail out before reading a full 'body', if possible.
 		// The current max version is 3.3 so if the version is >= 16.0,
@@ -631,7 +631,7 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 		msg := fmt.Sprintf("oversized record received with length %d", n)
 		return c.in.setErrorLocked(c.newRecordHeaderError(nil, msg))
 	}
-	if err := c.readFromUntil(c.conn, recordHeaderLen+n); err != nil {
+	if err := c.readFromUntil(c.conn, recordHeaderLen+n); err != nil { //从连接中读取record payload
 		if e, ok := err.(net.Error); !ok || !e.Temporary() {
 			c.in.setErrorLocked(err)
 		}
@@ -639,12 +639,12 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 	}
 
 	// Process message.
-	record := c.rawInput.Next(recordHeaderLen + n)
+	record := c.rawInput.Next(recordHeaderLen + n) //从缓存中获取完整的record 包括head&payload
 	data, typ, err := c.in.decrypt(record)
 	if err != nil {
 		return c.in.setErrorLocked(c.sendAlert(err.(alert)))
 	}
-	if len(data) > maxPlaintext {
+	if len(data) > maxPlaintext { //检测payload长度限制
 		return c.in.setErrorLocked(c.sendAlert(alertRecordOverflow))
 	}
 
@@ -728,7 +728,7 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 		if len(data) == 0 || expectChangeCipherSpec {
 			return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 		}
-		c.hand.Write(data)
+		c.hand.Write(data) //将数据写入缓存，用于上层读取
 	}
 
 	return nil
@@ -975,8 +975,8 @@ func (c *Conn) readHandshake() (interface{}, error) {
 		}
 	}
 
-	data := c.hand.Bytes()
-	n := int(data[1])<<16 | int(data[2])<<8 | int(data[3])
+	data := c.hand.Bytes()                                 //从缓存中(c.readRecord将payload写入到了)读取record payload
+	n := int(data[1])<<16 | int(data[2])<<8 | int(data[3]) //payload 第0字节，代表消息的类型，1-3字节代表消息有效长度
 	if n > maxHandshake {
 		c.sendAlertLocked(alertInternalError)
 		return nil, c.in.setErrorLocked(fmt.Errorf("tls: handshake message of length %d bytes exceeds maximum of %d bytes", n, maxHandshake))

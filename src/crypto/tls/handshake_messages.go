@@ -85,7 +85,7 @@ type clientHelloMsg struct {
 	secureRenegotiation              []byte
 	alpnProtocols                    []string
 	scts                             bool
-	supportedVersions                []uint16
+	supportedVersions                []uint16 //支持的tls版本
 	cookie                           []byte
 	keyShares                        []keyShare
 	earlyData                        bool

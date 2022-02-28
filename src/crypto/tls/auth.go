@@ -176,7 +176,7 @@ var rsaSignatureSchemes = []struct {
 // for a given certificate, based on the public key and the protocol version,
 // and optionally filtered by its explicit SupportedSignatureAlgorithms.
 //
-// This function must be kept in sync with supportedSignatureAlgorithms.
+// This function must be kept in sync with supportedSignatureAlgorithms. //根据tls版本和证书后获取支持的签名方案
 func signatureSchemesForCertificate(version uint16, cert *Certificate) []SignatureScheme {
 	priv, ok := cert.PrivateKey.(crypto.Signer)
 	if !ok {
@@ -188,7 +188,7 @@ func signatureSchemesForCertificate(version uint16, cert *Certificate) []Signatu
 	case *ecdsa.PublicKey:
 		if version != VersionTLS13 {
 			// In TLS 1.2 and earlier, ECDSA algorithms are not
-			// constrained to a single curve.
+			// constrained to a single curve.//tls1.2之前ECDSA算法不受限于某一条曲线
 			sigAlgs = []SignatureScheme{
 				ECDSAWithP256AndSHA256,
 				ECDSAWithP384AndSHA384,
@@ -207,7 +207,7 @@ func signatureSchemesForCertificate(version uint16, cert *Certificate) []Signatu
 		default:
 			return nil
 		}
-	case *rsa.PublicKey:
+	case *rsa.PublicKey: //根据模数大小和tls版本获取合适的签名方案
 		size := pub.Size()
 		sigAlgs = make([]SignatureScheme, 0, len(rsaSignatureSchemes))
 		for _, candidate := range rsaSignatureSchemes {
@@ -221,7 +221,7 @@ func signatureSchemesForCertificate(version uint16, cert *Certificate) []Signatu
 		return nil
 	}
 
-	if cert.SupportedSignatureAlgorithms != nil {
+	if cert.SupportedSignatureAlgorithms != nil { //如果证书有指定支持的签名算法，则对签名算法进行筛选
 		var filteredSigAlgs []SignatureScheme
 		for _, sigAlg := range sigAlgs {
 			if isSupportedSignatureAlgorithm(sigAlg, cert.SupportedSignatureAlgorithms) {

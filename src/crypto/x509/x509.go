@@ -804,11 +804,11 @@ func (c *Certificate) CheckSignatureFrom(parent *Certificate) error {
 		return ConstraintViolationError{}
 	}
 
-	if parent.KeyUsage != 0 && parent.KeyUsage&KeyUsageCertSign == 0 {
+	if parent.KeyUsage != 0 && parent.KeyUsage&KeyUsageCertSign == 0 { //如果父证书不是用来证书签名的，返回错误
 		return ConstraintViolationError{}
 	}
 
-	if parent.PublicKeyAlgorithm == UnknownPublicKeyAlgorithm {
+	if parent.PublicKeyAlgorithm == UnknownPublicKeyAlgorithm { //如果父证书的公钥算法未知，返回错误
 		return ErrUnsupportedAlgorithm
 	}
 
@@ -846,7 +846,7 @@ func checkSignature(algo SignatureAlgorithm, signed, signature []byte, publicKey
 	var hashType crypto.Hash
 	var pubKeyAlgo PublicKeyAlgorithm
 
-	for _, details := range signatureAlgorithmDetails {
+	for _, details := range signatureAlgorithmDetails { //获取签名算法的hash算法和公钥生成算法
 		if details.algo == algo {
 			hashType = details.hash
 			pubKeyAlgo = details.pubKeyAlgo

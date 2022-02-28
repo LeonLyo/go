@@ -882,7 +882,7 @@ func (c *Config) getCertificate(clientHello *ClientHelloInfo) (*Certificate, err
 		return &c.Certificates[0], nil
 	}
 
-	if c.NameToCertificate != nil {
+	if c.NameToCertificate != nil { //如果有命名证书就根据ServerName/通配符*获取相关证书
 		name := strings.ToLower(clientHello.ServerName)
 		if cert, ok := c.NameToCertificate[name]; ok {
 			return cert, nil
@@ -896,7 +896,7 @@ func (c *Config) getCertificate(clientHello *ClientHelloInfo) (*Certificate, err
 			}
 		}
 	}
-
+	//如果多个证数去匹配相关证书
 	for _, cert := range c.Certificates {
 		if err := clientHello.SupportsCertificate(&cert); err == nil {
 			return &cert, nil
