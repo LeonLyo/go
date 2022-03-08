@@ -12,7 +12,7 @@ import (
 type pageBits [pallocChunkPages / 64]uint64
 
 // get returns the value of the i'th bit in the bitmap.
-func (b *pageBits) get(i uint) uint {
+func (b *pageBits) get(i uint) uint { //获取某个页对应的位值
 	return uint((b[i/64] >> (i % 64)) & 1)
 }
 
@@ -22,7 +22,7 @@ func (b *pageBits) block64(i uint) uint64 {
 }
 
 // set sets bit i of pageBits.
-func (b *pageBits) set(i uint) {
+func (b *pageBits) set(i uint) { //设置某个页位为1
 	b[i/64] |= 1 << (i % 64)
 }
 
@@ -118,7 +118,7 @@ func (b *pageBits) popcntRange(i, n uint) (s uint) {
 //
 // The precise representation is an implementation detail, but for the
 // sake of documentation, 0s are free pages and 1s are allocated pages.
-type pallocBits pageBits
+type pallocBits pageBits //一个块的页分配情况的位图，一个页4k, 一个块512个页，pallocBits是一个 512/64的uint64数组
 
 // consec8tab is a table containing the number of consecutive
 // zero bits for any uint8 value.
@@ -137,7 +137,7 @@ type pallocBits pageBits
 // 	}
 // 	return i
 // }
-var consec8tab = [256]uint{
+var consec8tab = [256]uint{ //从0-255这个256个数，分别对应的连续0的最大个数，比如 1(00000001)连续0个数为7，34(00100010)为3
 	8, 7, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4,
 	4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
 	5, 4, 3, 3, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2,
@@ -167,19 +167,19 @@ func (b *pallocBits) summarize() pallocSum {
 	for i := 0; i < len(b); i++ {
 		a := b[i]
 		for j := 0; j < 64; j += 8 {
-			k := uint8(a >> j)
+			k := uint8(a >> j) //按照每个8位取的意图是使用TrailingZeros8/LeadingZeros8/consec8tab的数组高效操作，以空间换时间
 
 			// Compute start.
-			si := uint(sys.TrailingZeros8(k))
+			si := uint(sys.TrailingZeros8(k)) //尾部连续0的个数，如1(00000001)跟随0个数为0，2(00000010)个数为1个
 			if start == uint(i*64+j) {
 				start += si
 			}
 
 			// Compute max.
-			if end+si > max {
+			if end+si > max { //中间max就是前一个end+后一个start
 				max = end + si
 			}
-			if mi := consec8tab[k]; mi > max {
+			if mi := consec8tab[k]; mi > max { //检测k中是否有更多个连续的0
 				max = mi
 			}
 
@@ -197,20 +197,20 @@ func (b *pallocBits) summarize() pallocSum {
 // find searches for npages contiguous free pages in pallocBits and returns
 // the index where that run starts, as well as the index of the first free page
 // it found in the search. searchIdx represents the first known free page and
-// where to begin the search from.
+// where to begin the search from. //searchIdx代表的是第一个已知的空闲页面<从哪里索引>
 //
 // If find fails to find any free space, it returns an index of ^uint(0) and
 // the new searchIdx should be ignored.
 //
 // Note that if npages == 1, the two returned values will always be identical.
-func (b *pallocBits) find(npages uintptr, searchIdx uint) (uint, uint) {
+func (b *pallocBits) find(npages uintptr, searchIdx uint) (uint, uint) { //返回找到n个连续页的起始索引，以及搜寻中找到的空闲页的起始索引
 	if npages == 1 {
 		addr := b.find1(searchIdx)
-		return addr, addr
+		return addr, addr //如果n==1，则找到1个连续页的索引和搜寻到的空闲起始页索引重合
 	} else if npages <= 64 {
 		return b.findSmallN(npages, searchIdx)
 	}
-	return b.findLargeN(npages, searchIdx)
+	return b.findLargeN(npages, searchIdx) //超过64的页至少要跨2个uint64
 }
 
 // find1 is a helper for find which searches for a single free page
@@ -242,23 +242,23 @@ func (b *pallocBits) findSmallN(npages uintptr, searchIdx uint) (uint, uint) {
 	end, newSearchIdx := uint(0), ^uint(0)
 	for i := searchIdx / 64; i < uint(len(b)); i++ {
 		bi := b[i]
-		if bi == ^uint64(0) {
+		if bi == ^uint64(0) { //判断bi位是否全被占用了
 			end = 0
 			continue
 		}
 		// First see if we can pack our allocation in the trailing
 		// zeros plus the end of the last 64 bits.
-		start := uint(sys.TrailingZeros64(bi))
-		if newSearchIdx == ^uint(0) {
+		start := uint(sys.TrailingZeros64(bi)) //获取此uint64中右后部分连续为0的个数
+		if newSearchIdx == ^uint(0) {          //索引没设置，则设置索引
 			// The new searchIdx is going to be at these 64 bits after any
 			// 1s we file, so count trailing 1s.
 			newSearchIdx = i*64 + uint(sys.TrailingZeros64(^bi))
 		}
-		if end+start >= uint(npages) {
+		if end+start >= uint(npages) { //前一个的end+当前的start是否能拼凑成连续的n
 			return i*64 - end, newSearchIdx
 		}
 		// Next, check the interior of the 64-bit chunk.
-		j := findBitRange64(^bi, uint(npages))
+		j := findBitRange64(^bi, uint(npages)) //从uint64中间位置搜寻有没有满足n的
 		if j < 64 {
 			return i*64 + j, newSearchIdx
 		}
@@ -290,22 +290,22 @@ func (b *pallocBits) findLargeN(npages uintptr, searchIdx uint) (uint, uint) {
 			// 1s we file, so count trailing 1s.
 			newSearchIdx = i*64 + uint(sys.TrailingZeros64(^x))
 		}
-		if size == 0 {
+		if size == 0 { //如果之前没有找到空闲页，就搜寻此64位左前部分是否有连续0位
 			size = uint(sys.LeadingZeros64(x))
 			start = i*64 + 64 - size
 			continue
 		}
-		s := uint(sys.TrailingZeros64(x))
+		s := uint(sys.TrailingZeros64(x)) //如果size有值，则判断此uint64的右后部分连续0位个数与size和是否满足n
 		if s+size >= uint(npages) {
 			size += s
 			return start, newSearchIdx
 		}
-		if s < 64 {
+		if s < 64 { //前后两个uint64不能拼接一个n，并且此uint64不全为0，则重置size和start的位置
 			size = uint(sys.LeadingZeros64(x))
 			start = i*64 + 64 - size
 			continue
 		}
-		size += 64
+		size += 64 //如果n很大，uint64全为0，则需要跨到下一个uint64
 	}
 	if size < uint(npages) {
 		return ^uint(0), newSearchIdx
@@ -348,7 +348,7 @@ func (b *pallocBits) pages64(i uint) uint64 {
 // findBitRange64 returns the bit index of the first set of
 // n consecutive 1 bits. If no consecutive set of 1 bits of
 // size n may be found in c, then it returns an integer >= 64.
-func findBitRange64(c uint64, n uint) uint {
+func findBitRange64(c uint64, n uint) uint { //从c中找n个连续为1的位的起始索引，如果没找到返回64+，
 	i := uint(0)
 	cont := uint(sys.TrailingZeros64(^c))
 	for cont < n && i < 64 {
@@ -366,7 +366,7 @@ func findBitRange64(c uint64, n uint) uint {
 //
 // Update the comment on (*pageAlloc).chunks should this
 // structure change.
-type pallocData struct {
+type pallocData struct { //pallocData记录了块(chunk)中页的分配情况和清扫情况
 	pallocBits
 	scavenged pageBits
 }

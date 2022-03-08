@@ -55,10 +55,10 @@ import (
 const (
 	// The size of a bitmap chunk, i.e. the amount of bits (that is, pages) to consider
 	// in the bitmap at once.
-	pallocChunkPages    = 1 << logPallocChunkPages
-	pallocChunkBytes    = pallocChunkPages * pageSize
+	pallocChunkPages    = 1 << logPallocChunkPages    //一个块的页数  1<<9 = 512个页
+	pallocChunkBytes    = pallocChunkPages * pageSize //块大小 1^22 4M
 	logPallocChunkPages = 9
-	logPallocChunkBytes = logPallocChunkPages + pageShift
+	logPallocChunkBytes = logPallocChunkPages + pageShift //块字节数 22个字节
 
 	// The number of radix bits for each level.
 	//
@@ -177,7 +177,7 @@ type pageAlloc struct {
 	// and may or may not be committed in grow (small address spaces
 	// may commit all the memory in init).
 	//
-	// The purpose of keeping len <= cap is to enforce bounds checks
+	// The purpose of keeping len <= cap is to enforce bounds checks  //为了进行友好的边界检查而不是运行的时候触发段错误
 	// on the top end of the slice so that instead of an unknown
 	// runtime segmentation fault, we get a much friendlier out-of-bounds
 	// error.
@@ -893,15 +893,15 @@ const (
 )
 
 // pallocSum is a packed summary type which packs three numbers: start, max,
-// and end into a single 8-byte value. Each of these values are a summary of
-// a bitmap and are thus counts, each of which may have a maximum value of
-// 2^21 - 1, or all three may be equal to 2^21. The latter case is represented
+// and end into a single 8-byte value. Each of these values are a summary of    l--------------------------------------h|
+// a bitmap and are thus counts, each of which may have a maximum value of      |<--0-20-->|<--21-41-->|<--42-62-->|-63-|
+// 2^21 - 1, or all three may be equal to 2^21. The latter case is represented  |    start |   max     |   end     |    |
 // by just setting the 64th bit.
-type pallocSum uint64
+type pallocSum uint64 //64为被拆分为start、max、end，这三个值最大值为2^21-1,也可能是2^21此时第63位为1
 
 // packPallocSum takes a start, max, and end value and produces a pallocSum.
 func packPallocSum(start, max, end uint) pallocSum {
-	if max == maxPackedValue {
+	if max == maxPackedValue { //如果max为2^21则最高位置为1
 		return pallocSum(uint64(1 << 63))
 	}
 	return pallocSum((uint64(start) & (maxPackedValue - 1)) |

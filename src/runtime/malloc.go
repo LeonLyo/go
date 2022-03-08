@@ -114,12 +114,12 @@ const (
 	tinySizeClass = _TinySizeClass
 	maxSmallSize  = _MaxSmallSize
 
-	pageShift = _PageShift
-	pageSize  = _PageSize
-	pageMask  = _PageMask
+	pageShift = _PageShift //页偏移位 13位 8k
+	pageSize  = _PageSize  //页大小 8k
+	pageMask  = _PageMask  //页屏蔽字 2^13 -1
 	// By construction, single page spans of the smallest object class
 	// have the most objects per span.
-	maxObjsPerSpan = pageSize / 8
+	maxObjsPerSpan = pageSize / 8  //一个span上最多对象数
 
 	concurrentSweep = _ConcurrentSweep
 
