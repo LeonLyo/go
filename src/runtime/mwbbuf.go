@@ -240,7 +240,7 @@ func wbBufFlush1Debug(old, buf1, buf2 uintptr, start *uintptr, next uintptr) {
 //
 //go:nowritebarrierrec
 //go:systemstack
-func wbBufFlush1(_p_ *p) {
+func wbBufFlush1(_p_ *p) { //将写屏障缓冲区刷新到gc工作队列
 	// Get the buffered pointers.
 	start := uintptr(unsafe.Pointer(&_p_.wbBuf.buf[0]))
 	n := (_p_.wbBuf.next - start) / unsafe.Sizeof(_p_.wbBuf.buf[0])

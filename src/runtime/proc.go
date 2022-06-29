@@ -911,7 +911,7 @@ var worldsema uint32 = 1
 // startTheWorldWithSema and stopTheWorldWithSema.
 // Holding worldsema causes any other goroutines invoking
 // stopTheWorld to block.
-func stopTheWorldWithSema() {
+func stopTheWorldWithSema() { //终止所有的p工作
 	_g_ := getg()
 
 	// If we hold a lock, then we won't be able to stop another M
@@ -930,7 +930,7 @@ func stopTheWorldWithSema() {
 	// try to retake all P's in Psyscall status
 	for _, p := range allp {
 		s := p.status
-		if s == _Psyscall && atomic.Cas(&p.status, s, _Pgcstop) {
+		if s == _Psyscall && atomic.Cas(&p.status, s, _Pgcstop) { //p系统调用状态，说明目前其绑定的m陷入系统调用，并且p可能还没有被其他m窃取，则直接停止
 			if trace.enabled {
 				traceGoSysBlock(p)
 				traceProcStop(p)
@@ -948,14 +948,14 @@ func stopTheWorldWithSema() {
 		p.status = _Pgcstop
 		sched.stopwait--
 	}
-	wait := sched.stopwait > 0
+	wait := sched.stopwait > 0 //>0还要p在工作中，等待其停止
 	unlock(&sched.lock)
 
 	// wait for remaining P's to stop voluntarily
 	if wait {
 		for {
 			// wait for 100us, then try to re-preempt in case of any races
-			if notetsleep(&sched.stopnote, 100*1000) {
+			if notetsleep(&sched.stopnote, 100*1000) { //如果被wakeup，则说明sched.stopwait==0了，则退出循环，如果是超时100us，则进行preemptall
 				noteclear(&sched.stopnote)
 				break
 			}

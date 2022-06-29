@@ -94,7 +94,7 @@ const (
 )
 
 // heapRetained returns an estimate of the current heap RSS.
-func heapRetained() uint64 {
+func heapRetained() uint64 { //RSS Resident Set Size 实际使用物理内存（包含共享库占用的内存）
 	return atomic.Load64(&memstats.heap_sys) - atomic.Load64(&memstats.heap_released)
 }
 
@@ -119,16 +119,16 @@ func gcPaceScavenger() {
 		return
 	}
 	// Compute our scavenging goal.
-	goalRatio := float64(memstats.next_gc) / float64(memstats.last_next_gc)
-	retainedGoal := uint64(float64(memstats.last_heap_inuse) * goalRatio)
+	goalRatio := float64(memstats.next_gc) / float64(memstats.last_next_gc) //本次堆目标/上次堆目标
+	retainedGoal := uint64(float64(memstats.last_heap_inuse) * goalRatio)   //上次使用*goalRatio推算出这次大概的堆使用量
 	// Add retainExtraPercent overhead to retainedGoal. This calculation
 	// looks strange but the purpose is to arrive at an integer division
 	// (e.g. if retainExtraPercent = 12.5, then we get a divisor of 8)
 	// that also avoids the overflow from a multiplication.
-	retainedGoal += retainedGoal / (1.0 / (retainExtraPercent / 100.0))
+	retainedGoal += retainedGoal / (1.0 / (retainExtraPercent / 100.0)) //扩展10%
 	// Align it to a physical page boundary to make the following calculations
 	// a bit more exact.
-	retainedGoal = (retainedGoal + uint64(physPageSize) - 1) &^ (uint64(physPageSize) - 1)
+	retainedGoal = (retainedGoal + uint64(physPageSize) - 1) &^ (uint64(physPageSize) - 1) //物理页向上对齐
 
 	// Represents where we are now in the heap's contribution to RSS in bytes.
 	//
@@ -146,7 +146,7 @@ func gcPaceScavenger() {
 	// If we're already below our goal, or within one page of our goal, then disable
 	// the background scavenger. We disable the background scavenger if there's
 	// less than one physical page of work to do because it's not worth it.
-	if retainedNow <= retainedGoal || retainedNow-retainedGoal < uint64(physPageSize) {
+	if retainedNow <= retainedGoal || retainedNow-retainedGoal < uint64(physPageSize) { //如果预留的系统堆高于目标，则不用进行清理
 		mheap_.scavengeGoal = ^uint64(0)
 		return
 	}
@@ -280,7 +280,7 @@ func bgscavenge(c chan int) {
 			crit = float64(nanotime() - start)
 		})
 
-		if released == 0 {
+		if released == 0 { //如果没有回收到任何的内存，park住，等待wakeScavenger被调用
 			lock(&scavenge.lock)
 			scavenge.parked = true
 			goparkunlock(&scavenge.lock, waitReasonGCScavengeWait, traceEvGoBlock, 1)
@@ -332,13 +332,13 @@ func bgscavenge(c chan int) {
 		// much, then scavengeEMWA < idealFraction, so we'll adjust the sleep time
 		// down.
 		adjust := scavengeEWMA / idealFraction
-		sleepTime := int64(adjust * crit / (scavengePercent / 100.0))
+		sleepTime := int64(adjust * crit / (scavengePercent / 100.0)) //计算需要休眠的时间，愿意花费在清扫上的时间是1/100，如果清扫花费了1us，则睡眠100um，当然adjust为1的情况下
 
 		// Go to sleep.
 		slept := scavengeSleep(sleepTime)
 
 		// Compute the new ratio.
-		fraction := crit / (crit + float64(slept))
+		fraction := crit / (crit + float64(slept)) //计算清扫时间和总时间的比值，此值越大说明睡多了，下次需要睡小店
 
 		// Set a lower bound on the fraction.
 		// Due to OS-related anomalies we may "sleep" for an inordinate amount
@@ -368,10 +368,10 @@ func bgscavenge(c chan int) {
 // Must run on the system stack because scavengeOne must run on the
 // system stack.
 //
-//go:systemstack
-func (s *pageAlloc) scavenge(nbytes uintptr, locked bool) uintptr {
+//go:systemstack //pageAlloc的清理主要是将标记内存的标记数据进行处理，mheap中heapArean没有处理
+func (s *pageAlloc) scavenge(nbytes uintptr, locked bool) uintptr { //清理会更新scavAddr的值，以及告诉os内存不再使用了，并标记为已清扫状态
 	released := uintptr(0)
-	for released < nbytes {
+	for released < nbytes { //清扫n字节的空间
 		r := s.scavengeOne(nbytes-released, locked)
 		if r == 0 {
 			// Nothing left to scavenge! Give up.
@@ -488,8 +488,8 @@ func (s *pageAlloc) scavengeOne(max uintptr, locked bool) uintptr {
 		base, npages := s.chunkOf(ci).findScavengeCandidate(chunkPageIndex(s.scavAddr), minPages, maxPages)
 
 		// If we found something, scavenge it and return!
-		if npages != 0 {
-			s.scavengeRangeLocked(ci, base, npages)
+		if npages != 0 { //找到空闲和未清理的页后，进行清理
+			s.scavengeRangeLocked(ci, base, npages) //调用sysUnused告诉os此部分内存目前不再使用了
 			unlockHeap()
 			return uintptr(npages) * pageSize
 		}
@@ -594,8 +594,8 @@ newRange:
 // scavengeRangeLocked scavenges the given region of memory.
 //
 // s.mheapLock must be held.
-func (s *pageAlloc) scavengeRangeLocked(ci chunkIdx, base, npages uint) {
-	s.chunkOf(ci).scavenged.setRange(base, npages)
+func (s *pageAlloc) scavengeRangeLocked(ci chunkIdx, base, npages uint) { //清理[base,base+npages), 更改scavAddr，并标记为已清理状态
+	s.chunkOf(ci).scavenged.setRange(base, npages) //将页标记为已清扫
 
 	// Compute the full address for the start of the range.
 	addr := chunkBase(ci) + uintptr(base)*pageSize
@@ -608,11 +608,11 @@ func (s *pageAlloc) scavengeRangeLocked(ci chunkIdx, base, npages uint) {
 	if s.test {
 		return
 	}
-	sysUnused(unsafe.Pointer(addr), uintptr(npages)*pageSize)
+	sysUnused(unsafe.Pointer(addr), uintptr(npages)*pageSize) //建议os内存已不再被需要可以释放
 
 	// Update global accounting only when not in test, otherwise
 	// the runtime's accounting will be wrong.
-	mSysStatInc(&memstats.heap_released, uintptr(npages)*pageSize)
+	mSysStatInc(&memstats.heap_released, uintptr(npages)*pageSize) //将释放记录
 }
 
 // fillAligned returns x but with all zeroes in m-aligned
@@ -797,7 +797,7 @@ func (m *pallocData) findScavengeCandidate(searchIdx uint, min, max uintptr) (ui
 	// TODO(mknyszek): Support larger huge page sizes.
 	// TODO(mknyszek): Consider taking pages-per-huge-page as a parameter
 	// so we can write tests for this.
-	if physHugePageSize > pageSize && physHugePageSize > physPageSize {
+	if physHugePageSize > pageSize && physHugePageSize > physPageSize { //遇到大页的话不破坏大页
 		// We have huge pages, so let's ensure we don't break one by scavenging
 		// over a huge page boundary. If the range [start, start+size) overlaps with
 		// a free-and-unscavenged huge page, we want to grow the region we scavenge
@@ -812,13 +812,13 @@ func (m *pallocData) findScavengeCandidate(searchIdx uint, min, max uintptr) (ui
 		if hugePageAbove <= end {
 			// Compute the huge page boundary below our candidate.
 			hugePageBelow := uint(alignDown(uintptr(start), pagesPerHugePage))
-
-			if hugePageBelow >= end-run {
+			//											  end-run below  start    above  end
+			if hugePageBelow >= end-run { //说明大页在可回收内存之间|____|____|__________|____|
 				// We're in danger of breaking apart a huge page since start+size crosses
 				// a huge page boundary and rounding down start to the nearest huge
 				// page boundary is included in the full run we found. Include the entire
 				// huge page in the bound by rounding down to the huge page size.
-				size = size + (start - hugePageBelow)
+				size = size + (start - hugePageBelow) //保持一个大页
 				start = hugePageBelow
 			}
 		}

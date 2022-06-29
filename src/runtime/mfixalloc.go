@@ -13,7 +13,7 @@ import "unsafe"
 // FixAlloc is a simple free-list allocator for fixed size objects.
 // Malloc uses a FixAlloc wrapped around sysAlloc to manage its
 // mcache and mspan objects.
-//
+//用来管理mcache和mspan对象
 // Memory returned by fixalloc.alloc is zeroed by default, but the
 // caller may take responsibility for zeroing allocations by setting
 // the zero flag to false. This is only safe if the memory never
@@ -31,7 +31,7 @@ type fixalloc struct {
 	list   *mlink
 	chunk  uintptr // use uintptr instead of unsafe.Pointer to avoid write barriers
 	nchunk uint32
-	inuse  uintptr // in-use bytes now
+	inuse  uintptr // in-use bytes now //在使用的字节数，执行alloc一次会加和size大小，free减去
 	stat   *uint64
 	zero   bool // zero allocations
 }

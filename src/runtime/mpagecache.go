@@ -35,7 +35,7 @@ func (c *pageCache) empty() bool {
 //
 // Returns a base address of zero on failure, in which case the
 // amount of scavenged memory should be ignored.
-func (c *pageCache) alloc(npages uintptr) (uintptr, uintptr) {
+func (c *pageCache) alloc(npages uintptr) (uintptr, uintptr) { //返回分配地址和被标记为清扫的字节数
 	if c.cache == 0 {
 		return 0, 0
 	}
@@ -114,14 +114,14 @@ func (s *pageAlloc) allocToCache() pageCache {
 	if s.summary[len(s.summary)-1][ci] != 0 {
 		// Fast path: there's free pages at or near the searchAddr address.
 		chunk := s.chunkOf(ci)
-		j, _ := chunk.find(1, chunkPageIndex(s.searchAddr))
+		j, _ := chunk.find(1, chunkPageIndex(s.searchAddr)) //从块中找到至少一个空闲页的页位置，运气好的话最大会获得64个页的空闲空间
 		if j < 0 {
 			throw("bad summary data")
 		}
 		c = pageCache{
 			base:  chunkBase(ci) + alignDown(uintptr(j), 64)*pageSize,
-			cache: ^chunk.pages64(j),
-			scav:  chunk.scavenged.block64(j),
+			cache: ^chunk.pages64(j),          //对已分配标志取反，则标1位代表未分配
+			scav:  chunk.scavenged.block64(j), //获取清扫数据
 		}
 	} else {
 		// Slow path: the searchAddr address had nothing there, so go find
@@ -156,6 +156,6 @@ func (s *pageAlloc) allocToCache() pageCache {
 	// However, s.searchAddr is not allowed to point into unmapped heap memory
 	// unless it is maxSearchAddr, so make it the last page as opposed to
 	// the page after.
-	s.searchAddr = c.base + pageSize*(pageCachePages-1)
+	s.searchAddr = c.base + pageSize*(pageCachePages-1) //更新搜索地址
 	return c
 }

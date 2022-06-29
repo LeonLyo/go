@@ -30,8 +30,8 @@ const (
 // structure.
 //
 // The sum of all the entries of levelBits should equal heapAddrBits.
-var levelBits = [summaryLevels]uint{
-	summaryL0Bits,
+var levelBits = [summaryLevels]uint{ //主要用来表示当前上层的一个summary囊括本层几个summary，第0层因为没有上层，所以是本层全部summary的数量
+	summaryL0Bits, //14
 	summaryLevelBits,
 	summaryLevelBits,
 	summaryLevelBits,
@@ -45,18 +45,18 @@ var levelBits = [summaryLevels]uint{
 // pointer p by doing:
 //   p >> levelShift[l]
 var levelShift = [summaryLevels]uint{
-	heapAddrBits - summaryL0Bits,
-	heapAddrBits - summaryL0Bits - 1*summaryLevelBits,
-	heapAddrBits - summaryL0Bits - 2*summaryLevelBits,
-	heapAddrBits - summaryL0Bits - 3*summaryLevelBits,
-	heapAddrBits - summaryL0Bits - 4*summaryLevelBits,
+	heapAddrBits - summaryL0Bits,                      //34
+	heapAddrBits - summaryL0Bits - 1*summaryLevelBits, //31
+	heapAddrBits - summaryL0Bits - 2*summaryLevelBits, //27
+	heapAddrBits - summaryL0Bits - 3*summaryLevelBits, //25
+	heapAddrBits - summaryL0Bits - 4*summaryLevelBits, //22
 }
 
 // levelLogPages is log2 the maximum number of runtime pages in the address space
 // a summary in the given level represents.
 //
 // The leaf level always represents exactly log2 of 1 chunk's worth of pages.
-var levelLogPages = [summaryLevels]uint{
+var levelLogPages = [summaryLevels]uint{ //每个level的summary 最大囊括多少个页的log2
 	logPallocChunkPages + 4*summaryLevelBits,
 	logPallocChunkPages + 3*summaryLevelBits,
 	logPallocChunkPages + 2*summaryLevelBits,
@@ -67,11 +67,11 @@ var levelLogPages = [summaryLevels]uint{
 // sysInit performs architecture-dependent initialization of fields
 // in pageAlloc. pageAlloc should be uninitialized except for sysStat
 // if any runtime statistic should be updated.
-func (s *pageAlloc) sysInit() {
+func (s *pageAlloc) sysInit() { //分配各层的pallocSum数组
 	// Reserve memory for each level. This will get mapped in
 	// as R/W by setArenas.
 	for l, shift := range levelShift {
-		entries := 1 << (heapAddrBits - shift)
+		entries := 1 << (heapAddrBits - shift) //下层是上层数量的8倍
 
 		// Reserve b bytes of memory anywhere in the address space.
 		b := alignUp(uintptr(entries)*pallocSumBytes, physPageSize)
@@ -96,7 +96,7 @@ func (s *pageAlloc) sysInit() {
 // Both must be aligned to pallocChunkBytes.
 //
 // The caller must update s.start and s.end after calling sysGrow.
-func (s *pageAlloc) sysGrow(base, limit uintptr) {
+func (s *pageAlloc) sysGrow(base, limit uintptr) { //将用到的summary的空间由reserve转换为可用状态
 	if base%pallocChunkBytes != 0 || limit%pallocChunkBytes != 0 {
 		print("runtime: base = ", hex(base), ", limit = ", hex(limit), "\n")
 		throw("sysGrow bounds not aligned to pallocChunkBytes")

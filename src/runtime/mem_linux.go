@@ -17,7 +17,7 @@ const (
 // Don't split the stack as this method may be invoked without a valid G, which
 // prevents us from allocating more stack.
 //go:nosplit
-func sysAlloc(n uintptr, sysStat *uint64) unsafe.Pointer {
+func sysAlloc(n uintptr, sysStat *uint64) unsafe.Pointer { //分配后直接可用
 	p, err := mmap(nil, n, _PROT_READ|_PROT_WRITE, _MAP_ANON|_MAP_PRIVATE, -1, 0)
 	if err != 0 {
 		if err == _EACCES {
@@ -101,7 +101,7 @@ func sysUnused(v unsafe.Pointer, n uintptr) {
 		// will release more memory than intended.
 		throw("unaligned sysUnused")
 	}
-
+	//MADV_DONTNEED：内核会在进程的页表中将这些页标记为 “未分配”，从而进程的 RSS 就会尽快释放和变小。OS 后续可以将对应的物理页分配给其他进程。MADV_FREE：内核只会在页表中将这些进程页面标记为可回收，在需要的时候才回收这些页面
 	var advise uint32
 	if debug.madvdontneed != 0 {
 		advise = _MADV_DONTNEED
@@ -112,11 +112,12 @@ func sysUnused(v unsafe.Pointer, n uintptr) {
 		// MADV_FREE was added in Linux 4.5. Fall back to MADV_DONTNEED if it is
 		// not supported.
 		atomic.Store(&adviseUnused, _MADV_DONTNEED)
-		madvise(v, n, _MADV_DONTNEED)
+		madvise(v, n, _MADV_DONTNEED) //madvise释放掉物理页，用户如果再次访问虚拟内存，os会主动将物理页映射到虚拟页
 	}
 }
 
-func sysUsed(v unsafe.Pointer, n uintptr) {
+//它通知操作系统需要内存区域，并确保可以安全地访问该区域。在没有明确的提交步骤和严格的过量提交限制的系统上，这通常是不操作的
+func sysUsed(v unsafe.Pointer, n uintptr) { //此方法在linux不太必要，主要用于优化大页，但是在windows中此操作比较重要，因为在windows中需要执行提交操作，内存才可以安全使用
 	// Partially undo the NOHUGEPAGE marks from sysUnused
 	// for whole huge pages between v and v+n. This may
 	// leave huge pages off at the end points v and v+n
@@ -144,16 +145,16 @@ func sysHugePage(v unsafe.Pointer, n uintptr) {
 // Don't split the stack as this function may be invoked without a valid G,
 // which prevents us from allocating more stack.
 //go:nosplit
-func sysFree(v unsafe.Pointer, n uintptr, sysStat *uint64) {
+func sysFree(v unsafe.Pointer, n uintptr, sysStat *uint64) { //直接释放给os
 	mSysStatDec(sysStat, n)
 	munmap(v, n)
 }
 
-func sysFault(v unsafe.Pointer, n uintptr) {
-	mmap(v, n, _PROT_NONE, _MAP_ANON|_MAP_PRIVATE|_MAP_FIXED, -1, 0)
+func sysFault(v unsafe.Pointer, n uintptr) { //保留虚拟内存，会将映射的物理内存释放，并将虚拟地址空间的权限设置为不可访问
+	mmap(v, n, _PROT_NONE, _MAP_ANON|_MAP_PRIVATE|_MAP_FIXED, -1, 0) //如果[v,v+n)指定的内存区域与任何现有映射的页面重叠,那么现有映射的重叠部分将被丢弃。如果不指定_MAP_FIXED，如果[v,v+n)指定的内存区域与任何现有映射的页面重叠，那么内核避过现有映射的页面，重新给本地调用分配一块空间
 }
 
-func sysReserve(v unsafe.Pointer, n uintptr) unsafe.Pointer {
+func sysReserve(v unsafe.Pointer, n uintptr) unsafe.Pointer { //_PROT_NONE表示着页不能够被访问，虽然在虚拟内存中分配了一片空间，由于os的延迟映射机制，权限校验失败的情况下也就不会映射物理地址了
 	p, err := mmap(v, n, _PROT_NONE, _MAP_ANON|_MAP_PRIVATE, -1, 0)
 	if err != 0 {
 		return nil
@@ -161,7 +162,7 @@ func sysReserve(v unsafe.Pointer, n uintptr) unsafe.Pointer {
 	return p
 }
 
-func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64) {
+func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64) { //将[v, v+n)的权限设置为可读可写，即可以映射到物理内存
 	mSysStatInc(sysStat, n)
 
 	p, err := mmap(v, n, _PROT_READ|_PROT_WRITE, _MAP_ANON|_MAP_FIXED|_MAP_PRIVATE, -1, 0)

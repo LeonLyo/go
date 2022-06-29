@@ -54,7 +54,7 @@ func finishsweep_m() {
 	// shouldn't be any spans left to sweep, so this should finish
 	// instantly. If GC was forced before the concurrent sweep
 	// finished, there may be spans to sweep.
-	for sweepone() != ^uintptr(0) {
+	for sweepone() != ^uintptr(0) { //执行清扫直到完成
 		sweep.npausesweep++
 	}
 
@@ -124,7 +124,7 @@ func sweepone() uintptr {
 			}
 			continue
 		}
-		if s.sweepgen == sg-2 && atomic.Cas(&s.sweepgen, sg-2, sg-1) {
+		if s.sweepgen == sg-2 && atomic.Cas(&s.sweepgen, sg-2, sg-1) { //在清扫前会将mheap_.sweepgen+2，此时span的sweepgen还是原值，两者相差2
 			break
 		}
 	}
@@ -202,8 +202,8 @@ func (s *mspan) ensureSwept() {
 // It clears the mark bits in preparation for the next GC round.
 // Returns true if the span was returned to heap.
 // If preserve=true, don't return it to heap nor relink in mcentral lists;
-// caller takes care of it.
-func (s *mspan) sweep(preserve bool) bool {
+// caller takes care of it. //返回值为true表示span被返回给了堆
+func (s *mspan) sweep(preserve bool) bool { //清扫主要是将span中的数据进行重置，如freeindex，allocBits，allocCache等数据，如果可能(span中没有对象分配)span及其对应的内存被退回
 	// It's critical that we enter this function with preemption disabled,
 	// GC must not start while we are in the middle of this function.
 	_g_ := getg()
@@ -317,12 +317,12 @@ func (s *mspan) sweep(preserve bool) bool {
 	}
 
 	// Count the number of free objects in this span.
-	nalloc := uint16(s.countAlloc())
-	if spc.sizeclass() == 0 && nalloc == 0 {
+	nalloc := uint16(s.countAlloc())         //统计被保留的元素数
+	if spc.sizeclass() == 0 && nalloc == 0 { //如果是大对象且空闲。释放回堆
 		s.needzero = 1
 		freeToHeap = true
 	}
-	nfreed := s.allocCount - nalloc
+	nfreed := s.allocCount - nalloc //已分配的个数减去被标记的个数，即为被释放的元素数
 	if nalloc > s.allocCount {
 		print("runtime: nelems=", s.nelems, " nalloc=", nalloc, " previous allocCount=", s.allocCount, " nfreed=", nfreed, "\n")
 		throw("sweep increased allocation count")
@@ -337,18 +337,18 @@ func (s *mspan) sweep(preserve bool) bool {
 
 	// gcmarkBits becomes the allocBits.
 	// get a fresh cleared gcmarkBits in preparation for next GC
-	s.allocBits = s.gcmarkBits
-	s.gcmarkBits = newMarkBits(s.nelems)
+	s.allocBits = s.gcmarkBits           //将标记数据替换给allocBits
+	s.gcmarkBits = newMarkBits(s.nelems) //标记为清空
 
 	// Initialize alloc bits cache.
-	s.refillAllocCache(0)
+	s.refillAllocCache(0) //重新填充allocCache， 因为freeindex被重置为了0，故allocCache也从0位缓存
 
 	// We need to set s.sweepgen = h.sweepgen only when all blocks are swept,
 	// because of the potential for a concurrent free/SetFinalizer.
 	// But we need to set it before we make the span available for allocation
 	// (return it to heap or mcentral), because allocation code assumes that a
 	// span is already swept if available for allocation.
-	if freeToHeap || nfreed == 0 {
+	if freeToHeap || nfreed == 0 { //如果所有的块被清扫了，需要先设置s.sweepgen=h.sweepgen，1.因为并发扫描 2.分配代码认为span可用于分配时，span已经被扫描过了
 		// The span must be in our exclusive ownership until we update sweepgen,
 		// check for potential races.
 		if state := s.state.get(); state != mSpanInUse || s.sweepgen != sweepgen-1 {
@@ -362,7 +362,7 @@ func (s *mspan) sweep(preserve bool) bool {
 	}
 
 	if nfreed > 0 && spc.sizeclass() != 0 {
-		c.local_nsmallfree[spc.sizeclass()] += uintptr(nfreed)
+		c.local_nsmallfree[spc.sizeclass()] += uintptr(nfreed) //将清扫的元素数记录在cache.local_nsmallfree
 		res = mheap_.central[spc].mcentral.freeSpan(s, preserve, wasempty)
 		// mcentral.freeSpan updates sweepgen
 	} else if freeToHeap {
@@ -392,7 +392,7 @@ func (s *mspan) sweep(preserve bool) bool {
 		c.local_largefree += size
 		res = true
 	}
-	if !res {
+	if !res { //如果资源没有被返回给堆，将其放入sweepSpans中
 		// The span has been swept and is still in-use, so put
 		// it on the swept in-use list.
 		mheap_.sweepSpans[sweepgen/2%2].push(s)

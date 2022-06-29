@@ -139,8 +139,8 @@ const (
 //     order = log_2(size/FixedStack)
 // There is a free list for each order.
 //在proc.go schedinit中进行初始化
-var stackpool [_NumStackOrders]struct {
-	item stackpoolItem
+var stackpool [_NumStackOrders]struct { //_NumStackOrders=4,各个item的元素大小 stackpool[0] 2k,stackpool[1] 4k,stackpool[2] 8k,stackpool[3] 16k
+	item stackpoolItem //item中的span都是有空闲空间的span，如果span分配满了就会被移除
 	_    [cpu.CacheLinePadSize - unsafe.Sizeof(stackpoolItem{})%cpu.CacheLinePadSize]byte
 }
 
@@ -220,18 +220,18 @@ func stackpoolalloc(order uint8) gclinkptr {
 
 // Adds stack x to the free pool. Must be called with stackpool[order].item.mu held.
 func stackpoolfree(x gclinkptr, order uint8) {
-	s := spanOfUnchecked(uintptr(x))
+	s := spanOfUnchecked(uintptr(x)) //获取地址对应的span
 	if s.state.get() != mSpanManual {
 		throw("freeing stack not in a stack span")
 	}
-	if s.manualFreeList.ptr() == nil {
+	if s.manualFreeList.ptr() == nil { //说明span中没有空闲的分配空间，span没有空闲空间时，会将其从list中移除，此时span中有空闲释放，需要再将其加回到list
 		// s will now have a free stack
 		stackpool[order].item.span.insert(s)
 	}
 	x.ptr().next = s.manualFreeList
 	s.manualFreeList = x
 	s.allocCount--
-	if gcphase == _GCoff && s.allocCount == 0 {
+	if gcphase == _GCoff && s.allocCount == 0 { //如果span全部空闲，那么将其释放回mheap
 		// Span is completely free. Return it to the heap
 		// immediately if we're sweeping.
 		//
@@ -299,7 +299,7 @@ func stackcacherelease(c *mcache, order uint8) {
 }
 
 //go:systemstack
-func stackcache_clear(c *mcache) {
+func stackcache_clear(c *mcache) { //将cache中所有的栈空间释放回全局的栈缓存池
 	if stackDebug >= 1 {
 		print("stackcache clear\n")
 	}
@@ -328,7 +328,7 @@ func stackalloc(n uint32) stack {
 	// never try to grow the stack during the code that stackalloc runs.
 	// Doing so would cause a deadlock (issue 1547).
 	thisg := getg()
-	if thisg != thisg.m.g0 {
+	if thisg != thisg.m.g0 { //栈的分配必须在系统栈上即g0的栈
 		throw("stackalloc not on scheduler stack")
 	}
 	if n&(n-1) != 0 {
@@ -351,7 +351,7 @@ func stackalloc(n uint32) stack {
 	// If we need a stack of a bigger size, we fall back on allocating
 	// a dedicated span.
 	var v unsafe.Pointer
-	if n < _FixedStack<<_NumStackOrders && n < _StackCacheSize {
+	if n < _FixedStack<<_NumStackOrders && n < _StackCacheSize { //如果n<32k。一般情况下_FixedStack=2k， _NumStackOrders=4，_StackCacheSize=32k
 		order := uint8(0)
 		n2 := n
 		for n2 > _FixedStack {
@@ -360,7 +360,7 @@ func stackalloc(n uint32) stack {
 		}
 		var x gclinkptr
 		c := thisg.m.mcache
-		if stackNoCache != 0 || c == nil || thisg.m.preemptoff != "" {
+		if stackNoCache != 0 || c == nil || thisg.m.preemptoff != "" { //禁用了栈缓存|c==nil|m处于不可抢占
 			// c == nil can happen in the guts of exitsyscall or
 			// procresize. Just get a stack from the global pool.
 			// Also don't touch stackcache during gc

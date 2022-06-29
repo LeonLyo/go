@@ -20,13 +20,13 @@ import "runtime/internal/atomic"
 type mcentral struct {
 	lock      mutex
 	spanclass spanClass
-	nonempty  mSpanList // list of spans with a free object, ie a nonempty free list
-	empty     mSpanList // list of spans with no free objects (or cached in an mcache)
+	nonempty  mSpanList // list of spans with a free object, ie a nonempty free list //span还有可被分配的空间
+	empty     mSpanList // list of spans with no free objects (or cached in an mcache) //span没有可被分配的空间
 
 	// nmalloc is the cumulative count of objects allocated from
 	// this mcentral, assuming all spans in mcaches are
 	// fully-allocated. Written atomically, read under STW.
-	nmalloc uint64
+	nmalloc uint64 //cacheSpan的时候加和span中空闲的元素数，uncache的时候减去未分配的元素数
 }
 
 // Initialize a single central free list.
@@ -50,20 +50,20 @@ func (c *mcentral) cacheSpan() *mspan {
 	sg := mheap_.sweepgen
 retry:
 	var s *mspan
-	for s = c.nonempty.first; s != nil; s = s.next {
-		if s.sweepgen == sg-2 && atomic.Cas(&s.sweepgen, sg-2, sg-1) {
+	for s = c.nonempty.first; s != nil; s = s.next { //遍历还有空间的span
+		if s.sweepgen == sg-2 && atomic.Cas(&s.sweepgen, sg-2, sg-1) { //如果span需要清扫，则限制性清扫工作
 			c.nonempty.remove(s)
 			c.empty.insertBack(s)
 			unlock(&c.lock)
 			s.sweep(true)
 			goto havespan
 		}
-		if s.sweepgen == sg-1 {
+		if s.sweepgen == sg-1 { //span正在被清扫
 			// the span is being swept by background sweeper, skip
 			continue
 		}
 		// we have a nonempty span that does not require sweeping, allocate from it
-		c.nonempty.remove(s)
+		c.nonempty.remove(s) //span将被占用，所以从nonempty移到empty中，以免再次被分配
 		c.empty.insertBack(s)
 		unlock(&c.lock)
 		goto havespan
@@ -78,7 +78,7 @@ retry:
 			c.empty.insertBack(s)
 			unlock(&c.lock)
 			s.sweep(true)
-			freeIndex := s.nextFreeIndex()
+			freeIndex := s.nextFreeIndex() //清扫完后如果freeIndex有效，代表找到了
 			if freeIndex != s.nelems {
 				s.freeindex = freeIndex
 				goto havespan
@@ -103,7 +103,7 @@ retry:
 	unlock(&c.lock)
 
 	// Replenish central list if empty.
-	s = c.grow()
+	s = c.grow() //如果没有找到可用的span，需要从mheap中获取新的span
 	if s == nil {
 		return nil
 	}
@@ -123,7 +123,7 @@ havespan:
 	}
 	// Assume all objects from this span will be allocated in the
 	// mcache. If it gets uncached, we'll adjust this.
-	atomic.Xadd64(&c.nmalloc, int64(n))
+	atomic.Xadd64(&c.nmalloc, int64(n)) //这里把所有未分配的元素数提前加和
 	usedBytes := uintptr(s.allocCount) * s.elemsize
 	atomic.Xadd64(&memstats.heap_live, int64(spanBytes)-int64(usedBytes))
 	if trace.enabled {
@@ -137,23 +137,23 @@ havespan:
 	freeByteBase := s.freeindex &^ (64 - 1)
 	whichByte := freeByteBase / 8
 	// Init alloc bits cache.
-	s.refillAllocCache(whichByte)
+	s.refillAllocCache(whichByte) //填充allocCache
 
 	// Adjust the allocCache so that s.freeindex corresponds to the low bit in
 	// s.allocCache.
-	s.allocCache >>= s.freeindex % 64
+	s.allocCache >>= s.freeindex % 64 //将allocCache的首位指向s.freeindex指向的元素
 
 	return s
 }
 
 // Return span from an mcache.
-func (c *mcentral) uncacheSpan(s *mspan) {
+func (c *mcentral) uncacheSpan(s *mspan) { //将span还回mcenter
 	if s.allocCount == 0 {
 		throw("uncaching span but s.allocCount == 0")
 	}
 
 	sg := mheap_.sweepgen
-	stale := s.sweepgen == sg+1
+	stale := s.sweepgen == sg+1 //缓存但是未清扫
 	if stale {
 		// Span was cached before sweep began. It's our
 		// responsibility to sweep it.
@@ -161,7 +161,7 @@ func (c *mcentral) uncacheSpan(s *mspan) {
 		// Set sweepgen to indicate it's not cached but needs
 		// sweeping and can't be allocated from. sweep will
 		// set s.sweepgen to indicate s is swept.
-		atomic.Store(&s.sweepgen, sg-1)
+		atomic.Store(&s.sweepgen, sg-1) //置为正被清扫
 	} else {
 		// Indicate that s is no longer cached.
 		atomic.Store(&s.sweepgen, sg)
@@ -206,13 +206,13 @@ func (c *mcentral) uncacheSpan(s *mspan) {
 // freeSpan reports whether s was returned to the heap.
 // If preserve=true, it does not move s (the caller
 // must take care of it).
-func (c *mcentral) freeSpan(s *mspan, preserve bool, wasempty bool) bool {
+func (c *mcentral) freeSpan(s *mspan, preserve bool, wasempty bool) bool { //返回true代表资源被返回给了堆
 	if sg := mheap_.sweepgen; s.sweepgen == sg+1 || s.sweepgen == sg+3 {
 		throw("freeSpan given cached span")
 	}
 	s.needzero = 1
 
-	if preserve {
+	if preserve { //如果preserve为true，将span保留在mcentral中
 		// preserve is set only when called from (un)cacheSpan above,
 		// the span must be in the empty list.
 		if !s.inList() {
@@ -225,7 +225,7 @@ func (c *mcentral) freeSpan(s *mspan, preserve bool, wasempty bool) bool {
 	lock(&c.lock)
 
 	// Move to nonempty if necessary.
-	if wasempty {
+	if wasempty { //代表span是空的，没有被分配元素
 		c.empty.remove(s)
 		c.nonempty.insert(s)
 	}
@@ -240,7 +240,7 @@ func (c *mcentral) freeSpan(s *mspan, preserve bool, wasempty bool) bool {
 		unlock(&c.lock)
 		return false
 	}
-
+	//如果span中没有被分配任何元素，则将其从cache中移除，并将其返回到mheap中
 	c.nonempty.remove(s)
 	unlock(&c.lock)
 	mheap_.freeSpan(s)

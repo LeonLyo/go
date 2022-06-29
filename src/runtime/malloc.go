@@ -119,7 +119,7 @@ const (
 	pageMask  = _PageMask  //页屏蔽字 2^13 -1
 	// By construction, single page spans of the smallest object class
 	// have the most objects per span.
-	maxObjsPerSpan = pageSize / 8  //一个span上最多对象数
+	maxObjsPerSpan = pageSize / 8 //一个span上最多对象数
 
 	concurrentSweep = _ConcurrentSweep
 
@@ -242,7 +242,7 @@ const (
 	// This is particularly important with the race detector,
 	// since it significantly amplifies the cost of committed
 	// memory.
-	heapArenaBytes = 1 << logHeapArenaBytes
+	heapArenaBytes = 1 << logHeapArenaBytes //堆场的字节数，如上64位linux为64M
 
 	// logHeapArenaBytes is log_2 of heapArenaBytes. For clarity,
 	// prefer using heapArenaBytes where possible (we need the
@@ -615,17 +615,17 @@ func mallocinit() {
 //
 // h must be locked.
 func (h *mheap) sysAlloc(n uintptr) (v unsafe.Pointer, size uintptr) {
-	n = alignUp(n, heapArenaBytes)
+	n = alignUp(n, heapArenaBytes) //按arena单位分配, on 64-bit os 64M
 
 	// First, try the arena pre-reservation.
-	v = h.arena.alloc(n, heapArenaBytes, &memstats.heap_sys)
+	v = h.arena.alloc(n, heapArenaBytes, &memstats.heap_sys) //只在32位系统上生效
 	if v != nil {
 		size = n
 		goto mapped
 	}
 
 	// Try to grow the heap at a hint address.
-	for h.arenaHints != nil {
+	for h.arenaHints != nil { //会在arenaHints指向地址的边界上尝试进行向上或向下分配，如果分配成功则将边界扩大
 		hint := h.arenaHints
 		p := hint.addr
 		if hint.down {
@@ -758,13 +758,13 @@ mapped:
 			// to at most 2x waste.
 		}
 		h.allArenas = h.allArenas[:len(h.allArenas)+1]
-		h.allArenas[len(h.allArenas)-1] = ri
+		h.allArenas[len(h.allArenas)-1] = ri //将块索引放入数组
 
 		// Store atomically just in case an object from the
 		// new heap arena becomes visible before the heap lock
 		// is released (which shouldn't happen, but there's
 		// little downside to this).
-		atomic.StorepNoWB(unsafe.Pointer(&l2[ri.l2()]), unsafe.Pointer(r))
+		atomic.StorepNoWB(unsafe.Pointer(&l2[ri.l2()]), unsafe.Pointer(r)) //将分配的heapArena放入数组, 这里没有对heapArena内成员进行赋值
 	}
 
 	// Tell the race detector about the new heap memory.
@@ -829,12 +829,12 @@ var zerobase uintptr
 // nextFreeFast returns the next free object if one is quickly available.
 // Otherwise it returns 0.
 func nextFreeFast(s *mspan) gclinkptr {
-	theBit := sys.Ctz64(s.allocCache) // Is there a free object in the allocCache?
-	if theBit < 64 {
+	theBit := sys.Ctz64(s.allocCache) // Is there a free object in the allocCache? //从allocCache找寻第一个未被分配的位
+	if theBit < 64 {                  //<64说明找到了
 		result := s.freeindex + uintptr(theBit)
 		if result < s.nelems {
 			freeidx := result + 1
-			if freeidx%64 == 0 && freeidx != s.nelems {
+			if freeidx%64 == 0 && freeidx != s.nelems { //如果freeidx能被64整除的话，allocCache需要从allocbit中重新加载数据才行
 				return 0
 			}
 			s.allocCache >>= uint(theBit + 1)
@@ -922,9 +922,8 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 
 	// assistG is the G to charge for this allocation, or nil if
 	// GC is not currently active.
-	//如果开启后台gc，那么需要根据分配的size做一定的辅助标记
 	var assistG *g
-	if gcBlackenEnabled != 0 {
+	if gcBlackenEnabled != 0 { //如果开启后台gc，那么在分配size内存前需要先执行size内存的标记工作
 		// Charge the current user G for this allocation.
 		assistG = getg()
 		if assistG.m.curg != nil {
@@ -1090,7 +1089,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 	// All slots hold nil so no scanning is needed.
 	// This may be racing with GC so do it atomically if there can be
 	// a race marking the bit.
-	if gcphase != _GCoff {
+	if gcphase != _GCoff { //扫描阶段将新分配的内存标记为黑色
 		gcmarknewobject(uintptr(x), size, scanSize)
 	}
 
@@ -1284,7 +1283,7 @@ var persistentChunks *notInHeap
 // Intended for things like function/type/debug-related persistent data.
 // If align is 0, uses default align (currently 8).
 // The returned memory will be zeroed.
-//
+//没有关联的释放操作，目的是持久化的数据
 // Consider marking persistentalloc'd types go:notinheap.
 func persistentalloc(size, align uintptr, sysStat *uint64) unsafe.Pointer {
 	var p *notInHeap
@@ -1306,7 +1305,7 @@ func persistentalloc1(size, align uintptr, sysStat *uint64) *notInHeap {
 		throw("persistentalloc: size == 0")
 	}
 	if align != 0 {
-		if align&(align-1) != 0 {
+		if align&(align-1) != 0 { //对齐必须是2次方的
 			throw("persistentalloc: align is not a power of 2")
 		}
 		if align > _PageSize {
@@ -1316,21 +1315,21 @@ func persistentalloc1(size, align uintptr, sysStat *uint64) *notInHeap {
 		align = 8
 	}
 
-	if size >= maxBlock {
+	if size >= maxBlock { //如果分配大于64k，直接分配一个size块
 		return (*notInHeap)(sysAlloc(size, sysStat))
 	}
 
-	mp := acquirem()
+	mp := acquirem() //锁定m
 	var persistent *persistentAlloc
-	if mp != nil && mp.p != 0 {
+	if mp != nil && mp.p != 0 { //获取processer从processer中获取分配，避免锁
 		persistent = &mp.p.ptr().palloc
-	} else {
+	} else { //没有p从全局中加锁获取
 		lock(&globalAlloc.mutex)
 		persistent = &globalAlloc.persistentAlloc
 	}
-	persistent.off = alignUp(persistent.off, align)
-	if persistent.off+size > persistentChunkSize || persistent.base == nil {
-		persistent.base = (*notInHeap)(sysAlloc(persistentChunkSize, &memstats.other_sys))
+	persistent.off = alignUp(persistent.off, align)                          //偏移量进行对齐
+	if persistent.off+size > persistentChunkSize || persistent.base == nil { //如果persistent空间不足或者没有分配空间，则重新进行分配
+		persistent.base = (*notInHeap)(sysAlloc(persistentChunkSize, &memstats.other_sys)) //每次mamp分配256k
 		if persistent.base == nil {
 			if persistent == &globalAlloc.persistentAlloc {
 				unlock(&globalAlloc.mutex)
@@ -1340,9 +1339,9 @@ func persistentalloc1(size, align uintptr, sysStat *uint64) *notInHeap {
 
 		// Add the new chunk to the persistentChunks list.
 		for {
-			chunks := uintptr(unsafe.Pointer(persistentChunks))
-			*(*uintptr)(unsafe.Pointer(persistent.base)) = chunks
-			if atomic.Casuintptr((*uintptr)(unsafe.Pointer(&persistentChunks)), chunks, uintptr(unsafe.Pointer(persistent.base))) {
+			chunks := uintptr(unsafe.Pointer(persistentChunks))                                                                     //persistentChunks维护了一个列表，列表中的每个元素的首个空间存放下一个元素的地址
+			*(*uintptr)(unsafe.Pointer(persistent.base)) = chunks                                                                   //将persistent.base指向空间的第一个uintptr空间存放chunks指针
+			if atomic.Casuintptr((*uintptr)(unsafe.Pointer(&persistentChunks)), chunks, uintptr(unsafe.Pointer(persistent.base))) { //将persistentChunks指向persistent.base
 				break
 			}
 		}
@@ -1382,7 +1381,7 @@ func inPersistentAlloc(p uintptr) bool {
 // caller is responsible for locking.
 type linearAlloc struct {
 	next   uintptr // next free byte
-	mapped uintptr // one byte past end of mapped space
+	mapped uintptr // one byte past end of mapped space  //当前映射到的可用状态地址
 	end    uintptr // end of reserved space
 }
 
@@ -1397,7 +1396,7 @@ func (l *linearAlloc) alloc(size, align uintptr, sysStat *uint64) unsafe.Pointer
 		return nil
 	}
 	l.next = p + size
-	if pEnd := alignUp(l.next-1, physPageSize); pEnd > l.mapped {
+	if pEnd := alignUp(l.next-1, physPageSize); pEnd > l.mapped { //如果分配到了不可用(预留)映射区，则将其转换为可用(可读可写)映射区
 		// Transition from Reserved to Prepared to Ready.
 		sysMap(unsafe.Pointer(l.mapped), pEnd-l.mapped, sysStat)
 		sysUsed(unsafe.Pointer(l.mapped), pEnd-l.mapped)

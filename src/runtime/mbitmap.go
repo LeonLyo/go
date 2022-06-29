@@ -139,10 +139,10 @@ func subtract1(p *byte) *byte {
 // can more easily inline calls to those methods and registerize the
 // struct fields independently.
 type heapBits struct {
-	bitp  *uint8
-	shift uint32
-	arena uint32 // Index of heap arena containing bitp
-	last  *uint8 // Last byte arena's bitmap
+	bitp  *uint8 //地址对应bitmap数组中的元素指针
+	shift uint32 //每个uint8的元素包含对4个指针的标记，shift为地址对应的0-4索引值
+	arena uint32 // Index of heap arena containing bitp //地址对应的arenaIdx
+	last  *uint8 // Last byte arena's bitmap//bitmap中最后的元素指针
 }
 
 // Make the compiler check that heapBits.arena is large enough to hold
@@ -204,10 +204,10 @@ func (s *mspan) nextFreeIndex() uintptr {
 
 	aCache := s.allocCache
 
-	bitIndex := sys.Ctz64(aCache)
+	bitIndex := sys.Ctz64(aCache) //aCache低位有多少连续的0，即freeindex后有多少被分配的元素数
 	for bitIndex == 64 {
 		// Move index to start of next cached bits.
-		sfreeindex = (sfreeindex + 64) &^ (64 - 1)
+		sfreeindex = (sfreeindex + 64) &^ (64 - 1) //如果allocCache全为0，allocCache需要载入allocBits后面的数据
 		if sfreeindex >= snelems {
 			s.freeindex = snelems
 			return snelems
@@ -220,14 +220,14 @@ func (s *mspan) nextFreeIndex() uintptr {
 		// nothing available in cached bits
 		// grab the next 8 bytes and try again.
 	}
-	result := sfreeindex + uintptr(bitIndex)
+	result := sfreeindex + uintptr(bitIndex) //找到空闲位置的索引值
 	if result >= snelems {
 		s.freeindex = snelems
 		return snelems
 	}
 
-	s.allocCache >>= uint(bitIndex + 1)
-	sfreeindex = result + 1
+	s.allocCache >>= uint(bitIndex + 1) //allocCache移位到与freeindex齐平位置
+	sfreeindex = result + 1             //新的freeindex的值
 
 	if sfreeindex%64 == 0 && sfreeindex != snelems {
 		// We just incremented s.freeindex so it isn't 0.
@@ -346,8 +346,8 @@ func heapBitsForAddr(addr uintptr) (h heapBits) {
 		// we expect to crash in the caller.
 		return
 	}
-	h.bitp = &ha.bitmap[(addr/(sys.PtrSize*4))%heapArenaBitmapBytes]
-	h.shift = uint32((addr / sys.PtrSize) & 3)
+	h.bitp = &ha.bitmap[(addr/(sys.PtrSize*4))%heapArenaBitmapBytes] //找到addr对应的bitmap数组中对应的元素
+	h.shift = uint32((addr / sys.PtrSize) & 3)                       //获取其对应的0-4的索引值
 	h.arena = uint32(arena)
 	h.last = &ha.bitmap[len(ha.bitmap)-1]
 	return
@@ -394,18 +394,18 @@ func badPointer(s *mspan, p, refBase, refOff uintptr) {
 // It is nosplit so it is safe for p to be a pointer to the current goroutine's stack.
 // Since p is a uintptr, it would not be adjusted if the stack were to move.
 //go:nosplit
-func findObject(p, refBase, refOff uintptr) (base uintptr, s *mspan, objIndex uintptr) {
-	s = spanOf(p)
+func findObject(p, refBase, refOff uintptr) (base uintptr, s *mspan, objIndex uintptr) { //获取地址p指向的内存的元素的地址(p可能是元素所占内存的一个内存，所以要获取元素的起始地址），元素所在的span，元素的索引值
+	s = spanOf(p) //获取p地址所在的span
 	// If s is nil, the virtual address has never been part of the heap.
 	// This pointer may be to some mmap'd region, so we allow it.
-	if s == nil {
+	if s == nil { //p不是堆上的地址，返回
 		return
 	}
 	// If p is a bad pointer, it may not be in s's bounds.
 	//
 	// Check s.state to synchronize with span initialization
 	// before checking other fields. See also spanOfHeap.
-	if state := s.state.get(); state != mSpanInUse || p < s.base() || p >= s.limit {
+	if state := s.state.get(); state != mSpanInUse || p < s.base() || p >= s.limit { //出错了
 		// Pointers into stacks are also ok, the runtime manages these explicitly.
 		if state == mSpanManual {
 			return
@@ -490,18 +490,18 @@ func (h heapBits) nextArena() heapBits {
 // Note that forward does not modify h. The caller must record the result.
 // bits returns the heap bits for the current word.
 //go:nosplit
-func (h heapBits) forward(n uintptr) heapBits {
+func (h heapBits) forward(n uintptr) heapBits { //在h的当前位置上，跳转n个长度
 	n += uintptr(h.shift) / heapBitsShift
 	nbitp := uintptr(unsafe.Pointer(h.bitp)) + n/4
-	h.shift = uint32(n%4) * heapBitsShift
-	if nbitp <= uintptr(unsafe.Pointer(h.last)) {
+	h.shift = uint32(n%4) * heapBitsShift         //算出新的地址所在元素中的偏移量
+	if nbitp <= uintptr(unsafe.Pointer(h.last)) { //如果新位置没有跳出当前arena
 		h.bitp = (*uint8)(unsafe.Pointer(nbitp))
 		return h
 	}
 
 	// We're in a new heap arena.
 	past := nbitp - (uintptr(unsafe.Pointer(h.last)) + 1)
-	h.arena += 1 + uint32(past/heapArenaBitmapBytes)
+	h.arena += 1 + uint32(past/heapArenaBitmapBytes) //计算获取跨越到的arena的idx
 	ai := arenaIdx(h.arena)
 	if l2 := mheap_.arenas[ai.l1()]; l2 != nil && l2[ai.l2()] != nil {
 		a := l2[ai.l2()]
@@ -517,7 +517,7 @@ func (h heapBits) forward(n uintptr) heapBits {
 // contiguous sections of the bitmap. It returns the number of words
 // advanced over, which will be <= n.
 func (h heapBits) forwardOrBoundary(n uintptr) (heapBits, uintptr) {
-	maxn := 4 * ((uintptr(unsafe.Pointer(h.last)) + 1) - uintptr(unsafe.Pointer(h.bitp)))
+	maxn := 4 * ((uintptr(unsafe.Pointer(h.last)) + 1) - uintptr(unsafe.Pointer(h.bitp))) //获取last地址到bitp地址包含的bitmap总元素数, 跨arena的情况下回超出此值
 	if n > maxn {
 		n = maxn
 	}
@@ -868,7 +868,7 @@ func (h heapBits) clearCheckmarkSpan(size, n, total uintptr) {
 // oneBitCount is indexed by byte and produces the
 // number of 1 bits in that byte. For example 128 has 1 bit set
 // and oneBitCount[128] will holds 1.
-var oneBitCount = [256]uint8{
+var oneBitCount = [256]uint8{ //0-255 256个数每个数中1位的个数
 	0, 1, 1, 2, 1, 2, 2, 3,
 	1, 2, 2, 3, 2, 3, 3, 4,
 	1, 2, 2, 3, 2, 3, 3, 4,
@@ -905,7 +905,7 @@ var oneBitCount = [256]uint8{
 // countAlloc returns the number of objects allocated in span s by
 // scanning the allocation bitmap.
 // TODO:(rlh) Use popcount intrinsic.
-func (s *mspan) countAlloc() int {
+func (s *mspan) countAlloc() int { //获取被标记元素数，被标记意味着被被保留的元素
 	count := 0
 	maxIndex := s.nelems / 8
 	for i := uintptr(0); i < maxIndex; i++ {

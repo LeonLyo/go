@@ -19,8 +19,8 @@ import (
 type mcache struct {
 	// The following members are accessed on every malloc,
 	// so they are grouped here for better caching.
-	next_sample uintptr // trigger heap sample after allocating this many bytes
-	local_scan  uintptr // bytes of scannable heap allocated
+	next_sample uintptr // trigger heap sample after allocating this many bytes 分配这些字节内存后，触发堆采样，初始值为512k上下
+	local_scan  uintptr // bytes of scannable heap allocated //mallocgc分配内存时将类型中包含的指针内存数加和到local_scan中
 
 	// Allocator cache for tiny objects w/o pointers.
 	// See "Tiny allocator" comment in malloc.go.
@@ -36,15 +36,15 @@ type mcache struct {
 	local_tinyallocs uintptr // number of tiny allocs not counted in other stats
 
 	// The rest is not accessed on every malloc.
-	//alloc缓存当前可用的span 偶数索引为nosan的span(无指针数据)，计数为scan的span
+	//alloc缓存当前可用的span 偶数索引为noscan的span(无指针数据)，奇数为scan的span
 	alloc [numSpanClasses]*mspan // spans to allocate from, indexed by spanClass
 
 	stackcache [_NumStackOrders]stackfreelist
 
 	// Local allocator stats, flushed during GC.
-	local_largefree  uintptr                  // bytes freed for large objects (>maxsmallsize)
-	local_nlargefree uintptr                  // number of frees for large objects (>maxsmallsize)
-	local_nsmallfree [_NumSizeClasses]uintptr // number of frees for small objects (<=maxsmallsize)
+	local_largefree  uintptr                  // bytes freed for large objects (>maxsmallsize)//mspan释放清扫的时候，释放大内存的字节数
+	local_nlargefree uintptr                  // number of frees for large objects (>maxsmallsize)//mspan释放清扫的时候，释放大内存+1
+	local_nsmallfree [_NumSizeClasses]uintptr // number of frees for small objects (<=maxsmallsize) //mspan释放清扫的时候，释放了几个元素会纪录在此
 
 	// flushGen indicates the sweepgen during which this mcache
 	// was last flushed. If flushGen != mheap_.sweepgen, the spans
@@ -155,7 +155,7 @@ func (c *mcache) releaseAll() {
 	for i := range c.alloc {
 		s := c.alloc[i]
 		if s != &emptymspan {
-			mheap_.central[i].mcentral.uncacheSpan(s)
+			mheap_.central[i].mcentral.uncacheSpan(s) //将span放回center重新计算heap_live值
 			c.alloc[i] = &emptymspan
 		}
 	}

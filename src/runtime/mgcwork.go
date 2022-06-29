@@ -82,17 +82,17 @@ type gcWork struct {
 
 	// Bytes marked (blackened) on this gcWork. This is aggregated
 	// into work.bytesMarked by dispose.
-	bytesMarked uint64
+	bytesMarked uint64 //以span中的元素size为单位
 
 	// Scan work performed on this gcWork. This is aggregated into
 	// gcController by dispose and may also be flushed by callers.
-	scanWork int64
+	scanWork int64 //扫描到过的sys.PtrSize大小字节的个数
 
 	// flushedWork indicates that a non-empty work buffer was
 	// flushed to the global work list since the last gcMarkDone
 	// termination check. Specifically, this indicates that this
 	// gcWork may have communicated work to another gcWork.
-	flushedWork bool
+	flushedWork bool //表明将一个非空的workbuf放到了全局列表中
 
 	// pauseGen causes put operations to spin while pauseGen ==
 	// gcWorkPauseGen if debugCachedWork is true.
@@ -114,8 +114,8 @@ type gcWork struct {
 // permanently corrupt the gcWork.
 
 func (w *gcWork) init() {
-	w.wbuf1 = getempty()
-	wbuf2 := trygetfull()
+	w.wbuf1 = getempty()  //获取一个全空的wbuf
+	wbuf2 := trygetfull() //可能有些标记工作做的快，将两个wbuf都填满了，此时需要将一个满的放回到全局队列中，让工作不饱和的工人获取后继续工作
 	if wbuf2 == nil {
 		wbuf2 = getempty()
 	}
@@ -186,7 +186,7 @@ func (w *gcWork) put(obj uintptr) {
 		w.wbuf1, w.wbuf2 = w.wbuf2, w.wbuf1
 		wbuf = w.wbuf1
 		if wbuf.nobj == len(wbuf.obj) {
-			putfull(wbuf)
+			putfull(wbuf) //如果第二个也满了放到全局中
 			w.flushedWork = true
 			wbuf = getempty()
 			w.wbuf1 = wbuf
@@ -201,7 +201,7 @@ func (w *gcWork) put(obj uintptr) {
 	// it can encourage more workers to run. We delay this until
 	// the end of put so that w is in a consistent state, since
 	// enlistWorker may itself manipulate w.
-	if flushed && gcphase == _GCmark {
+	if flushed && gcphase == _GCmark { //如果在gc标记阶段，而有工人放了一个full workbuf到全局，说明gc工作压力比较大，此时gcController鼓励另一个p来执行一下标记工作
 		gcController.enlistWorker()
 	}
 }
@@ -315,7 +315,7 @@ func (w *gcWork) tryGetFast() uintptr {
 // ability to hide pointers during the concurrent mark phase.
 //
 //go:nowritebarrierrec
-func (w *gcWork) dispose() {
+func (w *gcWork) dispose() { //将工作队列放到全局的工作队列中
 	if wbuf := w.wbuf1; wbuf != nil {
 		if wbuf.nobj == 0 {
 			putempty(wbuf)
@@ -389,7 +389,7 @@ type workbufhdr struct {
 }
 
 //go:notinheap
-type workbuf struct {
+type workbuf struct { //workbuf结构占用2k空间
 	workbufhdr
 	// account for the above fields
 	obj [(_WorkbufSize - unsafe.Sizeof(workbufhdr{})) / sys.PtrSize]uintptr
@@ -449,7 +449,7 @@ func getempty() *workbuf {
 		}
 		// Slice up the span into new workbufs. Return one and
 		// put the rest on the empty list.
-		for i := uintptr(0); i+_WorkbufSize <= workbufAlloc; i += _WorkbufSize {
+		for i := uintptr(0); i+_WorkbufSize <= workbufAlloc; i += _WorkbufSize { //将span的空间分割成一个个2k大小的workbuf，将第一个返回，其余的放到work.empty中
 			newb := (*workbuf)(unsafe.Pointer(s.base() + i))
 			newb.nobj = 0
 			lfnodeValidate(&newb.node)

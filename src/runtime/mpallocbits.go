@@ -12,17 +12,17 @@ import (
 type pageBits [pallocChunkPages / 64]uint64
 
 // get returns the value of the i'th bit in the bitmap.
-func (b *pageBits) get(i uint) uint { //获取某个页对应的位值
+func (b *pageBits) get(i uint) uint { //获取i对应的位值
 	return uint((b[i/64] >> (i % 64)) & 1)
 }
 
 // block64 returns the 64-bit aligned block of bits containing the i'th bit.
-func (b *pageBits) block64(i uint) uint64 {
+func (b *pageBits) block64(i uint) uint64 { //获取i对应的uint64的块数据
 	return b[i/64]
 }
 
 // set sets bit i of pageBits.
-func (b *pageBits) set(i uint) { //设置某个页位为1
+func (b *pageBits) set(i uint) { //设置i位为1
 	b[i/64] |= 1 << (i % 64)
 }
 

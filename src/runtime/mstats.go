@@ -27,7 +27,7 @@ type mstats struct { //内存的统计信息
 	total_alloc uint64 // bytes allocated (even if freed)
 	sys         uint64 // bytes obtained from system (should be sum of xxx_sys below, no locking, approximate)
 	nlookup     uint64 // number of pointer lookups (unused)指针查找的次数
-	nmalloc     uint64 // number of mallocs 分配内存次数
+	nmalloc     uint64 // number of mallocs 分配内存次数，tiny+normal+large总和，其中
 	nfree       uint64 // number of frees 释放内存次数
 
 	// Statistics about malloc heap.
@@ -35,31 +35,35 @@ type mstats struct { //内存的统计信息
 	//
 	// Like MemStats, heap_sys and heap_inuse do not count memory
 	// in manually-managed spans.
-	heap_alloc    uint64 // bytes allocated and not yet freed (same as alloc above)
-	heap_sys      uint64 // virtual address space obtained from system for GC'd heap
-	heap_idle     uint64 // bytes in idle spans
-	heap_inuse    uint64 // bytes in mSpanInUse spans
+	heap_alloc uint64 // bytes allocated and not yet freed (same as alloc above)
+	//heap_sys用于记录从os中分配mmap的内存数, mheap增长的时候向os申请时增加，其实是申请虚拟内存的量, 释放堆用的是madvise，os只是解除物理内存和虚拟内存的映射,VM并没有释放所以不减少
+	//如果从堆中分配的内存是手动维护，比如golang申请的用作栈的内存，则将申请的内存从heap_sys减去，释放手动维护的空间时再加上，
+	heap_sys   uint64 // virtual address space obtained from system for GC'd heap
+	heap_idle  uint64 // bytes in idle spans //从系统新分配的内存会放到heap_idle统计，内存被分配给span时从heap_idle减去，span将内存释放回heap时再加上
+	heap_inuse uint64 // bytes in mSpanInUse spans //从mheap中分配非手动维护的空间mspan时，将字节数加和，释放减去，手动维护的如栈，则用stacks_inuse统计
+	//mheap从os新申请的内存，也会加和到heap_released，新申请的内存在palloc中清扫态都会被标注为已清扫，
+	//在从mheap申请msapn需要的内存时，将标记为已清扫态的内存内存的清扫态清除，并从heap_released中减去，palloc在清扫的时候通过sysUnused释放回os的空间加和到heap_released
 	heap_released uint64 // bytes released to the os
 
 	// heap_objects is not used by the runtime directly and instead
 	// computed on the fly by updatememstats.
-	heap_objects uint64 // total number of allocated objects
+	heap_objects uint64 // total number of allocated objects// mstats.nmalloc-mstats.nfree
 
 	// Statistics about allocation of low-level fixed-size structures.
 	// Protected by FixAlloc locks.
-	stacks_inuse uint64 // bytes in manually-managed stack spans; updated atomically or during STW
-	stacks_sys   uint64 // only counts newosproc0 stack in mstats; differs from MemStats.StackSys
-	mspan_inuse  uint64 // mspan structures
-	mspan_sys    uint64
-	mcache_inuse uint64 // mcache structures
-	mcache_sys   uint64
+	stacks_inuse uint64 // bytes in manually-managed stack spans; updated atomically or during STW//heap_inuse用于记录非手动管理的mspan分配的空间，stacks_inuse用于记录手动管理的
+	stacks_sys   uint64 // only counts newosproc0 stack in mstats; differs from MemStats.StackSys //如果指定了栈从os直接申请，即直接调用mmap而不是通过mheap，则用stacks_sys记录
+	mspan_inuse  uint64 // mspan structures //当前分配的所有mspan结构体的字节数
+	mspan_sys    uint64 //从系统中分配的用来构建mspan结构的字节数，主要是通过mmap申请了一大块空间
+	mcache_inuse uint64 // mcache structures //当前分配的所有mcache结构体的字节数
+	mcache_sys   uint64 //从系统中分配的用来构建mcache结构的字节数
 	buckhash_sys uint64 // profiling bucket hash table
 	gc_sys       uint64 // updated atomically or during STW
-	other_sys    uint64 // updated atomically or during STW
+	other_sys    uint64 // updated atomically or during STW 从系统中分配的字节数，不用于堆使用的部分
 
 	// Statistics about garbage collector.
 	// Protected by mheap or stopping the world during GC.
-	next_gc         uint64 // goal heap_live for when next GC ends; ^0 if disabled
+	next_gc         uint64 // goal heap_live for when next GC ends; ^0 if disabled //
 	last_gc_unix    uint64 // last gc (in unix time)
 	pause_total_ns  uint64
 	pause_ns        [256]uint64 // circular buffer of recent gc pause lengths
@@ -93,7 +97,7 @@ type mstats struct { //内存的统计信息
 	// previous cycle. This should be ≤ GOGC/100 so the trigger
 	// heap size is less than the goal heap size. This is set
 	// during mark termination for the next cycle's trigger.
-	//triggerRatio是堆增长到触发标记的比率
+	//triggerRatio是堆增长到触发标记的比率，初始值为7/8.0=0.875
 	triggerRatio float64
 
 	// gc_trigger is the heap size that triggers marking.
@@ -133,20 +137,20 @@ type mstats struct { //内存的统计信息
 	//
 	// Whenever this is updated, call traceHeapAlloc() and
 	// gcController.revise().
-	heap_live uint64
+	heap_live uint64 //1.在分配大页时，直接将分配的内存加和 2.mcache从mcenter中获取span的时候，默认未分配的所有空间都加和进去，mcache将span放回到mcenter时，再将span剩余未分配的空间从heap_live减去
 
 	// heap_scan is the number of bytes of "scannable" heap. This
 	// is the live heap (as counted by heap_live), but omitting
 	// no-scan objects and no-scan tails of objects.
 	//heap_scan可以扫描堆的字节数，是省略了不可扫描对象和对象不可扫描tails的活跃堆
 	// Whenever this is updated, call gcController.revise().
-	heap_scan uint64
+	heap_scan uint64 //heap_scan是所有mcache中local_scan的总和
 
 	// heap_marked is the number of bytes marked by the previous
 	// GC. After mark termination, heap_live == heap_marked, but
 	// unlike heap_live, heap_marked does not change until the
 	// next mark termination.
-	//heap_marked是被上一次GC标记的字节数，扫描终止后，heap_live == heap_marked，heap_marked只有到下次标记终止才会被更改
+	//heap_marked是被上一次GC标记的字节数，扫描终止后，heap_live == heap_marked，heap_marked只有到下次标记终止才会被更改,初始值为4M*(1+triggerRatio)=7.5M
 	heap_marked uint64
 }
 
@@ -451,7 +455,7 @@ func init() {
 // call to ReadMemStats. This is in contrast with a heap profile,
 // which is a snapshot as of the most recently completed garbage
 // collection cycle.
-func ReadMemStats(m *MemStats) {
+func ReadMemStats(m *MemStats) { //pprof通过此接口读取统计信息
 	stopTheWorld("read mem stats")
 
 	systemstack(func() {
@@ -560,7 +564,7 @@ func updatememstats() {
 		memstats.nmalloc += c.nmalloc
 		i := spanClass(spc).sizeclass()
 		memstats.by_size[i].nmalloc += c.nmalloc
-		totalAlloc += c.nmalloc * uint64(class_to_size[i])
+		totalAlloc += c.nmalloc * uint64(class_to_size[i]) //
 	}
 	// Collect per-sizeclass stats.
 	for i := 0; i < _NumSizeClasses; i++ {

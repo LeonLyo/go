@@ -37,15 +37,15 @@ func (a addrRange) contains(addr uintptr) bool {
 // subtract takes the addrRange toPrune and cuts out any overlap with
 // from, then returns the new range. subtract assumes that a and b
 // either don't overlap at all, only overlap on one side, or are equal.
-// If b is strictly contained in a, thus forcing a split, it will throw.
-func (a addrRange) subtract(b addrRange) addrRange {
-	if a.base >= b.base && a.limit <= b.limit {
+// If b is strictly contained in a, thus forcing a split, it will throw. 如果b严格包含在a，因此强制拆分就抛异常
+func (a addrRange) subtract(b addrRange) addrRange { //返回在a中但是不在b中的部分
+	if a.base >= b.base && a.limit <= b.limit { //b包含a不用分割
 		return addrRange{}
-	} else if a.base < b.base && a.limit > b.limit {
+	} else if a.base < b.base && a.limit > b.limit { //a包含b不能强制分割
 		throw("bad prune")
-	} else if a.limit > b.limit && a.base < b.limit {
+	} else if a.limit > b.limit && a.base < b.limit { //|b.base____|a.base______|<b.limit________|a.limit>
 		a.base = b.limit
-	} else if a.base < b.base && a.limit > b.base {
+	} else if a.base < b.base && a.limit > b.base { //<|a.base____|b.base>______|a.limit________|b.limit
 		a.limit = b.base
 	}
 	return a
@@ -63,7 +63,7 @@ func (a addrRange) subtract(b addrRange) addrRange {
 // addrRanges is not thread-safe.
 type addrRanges struct {
 	// ranges is a slice of ranges sorted by base.
-	ranges []addrRange
+	ranges []addrRange //ranges存放的数据是按照地址从小到大放置
 
 	// sysStat is the stat to track allocations by this type
 	sysStat *uint64

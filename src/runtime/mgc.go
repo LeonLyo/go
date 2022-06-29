@@ -167,7 +167,7 @@ var heapminimum uint64 = defaultHeapMinimum
 const defaultHeapMinimum = 4 << 20
 
 // Initialized from $GOGC.  GOGC=off means no GC.
-var gcpercent int32
+var gcpercent int32 //默认100
 
 func gcinit() {
 	if unsafe.Sizeof(workbuf{}) != _WorkbufSize {
@@ -456,7 +456,7 @@ func (c *gcControllerState) startCycle() {
 			// Too many dedicated workers.
 			c.dedicatedMarkWorkersNeeded--
 		}
-		c.fractionalUtilizationGoal = (totalUtilizationGoal - float64(c.dedicatedMarkWorkersNeeded)) / float64(gomaxprocs)
+		c.fractionalUtilizationGoal = (totalUtilizationGoal - float64(c.dedicatedMarkWorkersNeeded)) / float64(gomaxprocs) //这里为什么还是除以gomaxprocs而不是gomaxprocs-dedicatedMarkWorkersNeeded
 	} else {
 		c.fractionalUtilizationGoal = 0
 	}
@@ -475,7 +475,7 @@ func (c *gcControllerState) startCycle() {
 
 	// Compute initial values for controls that are updated
 	// throughout the cycle.
-	c.revise()
+	c.revise() //修订
 
 	if debug.gcpacertrace > 0 {
 		print("pacer: assist ratio=", c.assistWorkPerByte,
@@ -496,7 +496,7 @@ func (c *gcControllerState) startCycle() {
 // is when assists are enabled and the necessary statistics are
 // available).
 //根据当前heap_live(当前分配的堆)和next_gc(根据gcpercent计算的此次原则上可以分配的最大堆)计算assistWorkPerByte，assistBytesPerWork
-func (c *gcControllerState) revise() {
+func (c *gcControllerState) revise() { //主要计算assistWorkPerByte和assistBytesPerWork值
 	gcpercent := gcpercent
 	if gcpercent < 0 {
 		// If GC is disabled but we're running a forced GC,
@@ -563,8 +563,8 @@ func (c *gcControllerState) revise() {
 	// Compute the mutator assist ratio so by the time the mutator
 	// allocates the remaining heap bytes up to next_gc, it will
 	// have done (or stolen) the remaining amount of scan work.
-	c.assistWorkPerByte = float64(scanWorkRemaining) / float64(heapRemaining)
-	c.assistBytesPerWork = float64(heapRemaining) / float64(scanWorkRemaining)
+	c.assistWorkPerByte = float64(scanWorkRemaining) / float64(heapRemaining)  //剩余需要扫描的字节数除以到达目标剩余可分配的字节数，就是分配一个字节需要扫描的字节数
+	c.assistBytesPerWork = float64(heapRemaining) / float64(scanWorkRemaining) //剩余可分配的字节数除以剩余需要扫描的字节数，就是每次扫描工作要扫描多少字节
 }
 
 // endCycle computes the trigger ratio for the next cycle.
@@ -595,15 +595,15 @@ func (c *gcControllerState) endCycle() float64 {
 	// growth if we had the desired CPU utilization). The
 	// difference between this estimate and the GOGC-based goal
 	// heap growth is the error.
-	goalGrowthRatio := gcEffectiveGrowthRatio()
-	actualGrowthRatio := float64(memstats.heap_live)/float64(memstats.heap_marked) - 1
+	goalGrowthRatio := gcEffectiveGrowthRatio()                                        //目标增长率,其值越大代表heap_marked越小，也就是可以提高triggerRatio
+	actualGrowthRatio := float64(memstats.heap_live)/float64(memstats.heap_marked) - 1 //内存实际增加的比率，其值越大代表增加块扫描慢，需要降低triggerRatio
 	assistDuration := nanotime() - c.markStartTime
 
 	// Assume background mark hit its utilization goal.
 	utilization := gcBackgroundUtilization
 	// Add assist utilization; avoid divide by zero.
 	if assistDuration > 0 {
-		utilization += float64(c.assistTime) / float64(assistDuration*int64(gomaxprocs))
+		utilization += float64(c.assistTime) / float64(assistDuration*int64(gomaxprocs)) //助力扫描花费的总时间/扫描开始的总时间，这个值大代表需要减少triggerRatio值
 	}
 
 	triggerError := goalGrowthRatio - memstats.triggerRatio - utilization/gcGoalUtilization*(actualGrowthRatio-memstats.triggerRatio)
@@ -774,7 +774,7 @@ func pollFractionalWorkerExit() bool {
 // memstats.heap_live. These must be up to date.
 //
 // mheap_.lock must be held or the world must be stopped.
-func gcSetTriggerRatio(triggerRatio float64) {
+func gcSetTriggerRatio(triggerRatio float64) { //根据设置的triggerRatio结合设置的gcpercent计算gc_trigger(下次触发gc的时机)、next_gc(gc完成后保留的内存最大量)
 	// Compute the next GC goal, which is when the allocated heap
 	// has grown by GOGC/100 over the heap marked by the last
 	// cycle.
@@ -786,7 +786,7 @@ func gcSetTriggerRatio(triggerRatio float64) {
 	}
 
 	// Set the trigger ratio, capped to reasonable bounds.
-	//设置trigger ratio到合理范围 如果gcpercent >= 0 triggerRatio在[0.95 * float64(gcpercent) / 100 , 0.6 float64(gcpercent) / 100 ]
+	//设置trigger ratio到合理范围 如果gcpercent >= 0 triggerRatio在[0.6 * float64(gcpercent) / 100 , 0.95 float64(gcpercent) / 100 ]
 	if gcpercent >= 0 {
 		scalingFactor := float64(gcpercent) / 100
 		// Ensure there's always a little margin so that the
@@ -857,7 +857,7 @@ func gcSetTriggerRatio(triggerRatio float64) {
 			goal = trigger
 		}
 	}
-	//总结下来是:triggerRatio取值范围为[0.95 * float64(gcpercent) / 100 , 0.6 float64(gcpercent) / 100 ]
+	//总结下来是:triggerRatio取值范围为[0.6 * float64(gcpercent) / 100 , 0.95 float64(gcpercent) / 100 ]
 	//trigger = uint64(float64(memstats.heap_marked) * (1 + triggerRatio))
 	//goal = memstats.heap_marked * (1 + *uint64(gcpercent)/100) 故 goal > trigger，也就是提前扫描,避免扫描延后
 	// Commit to the trigger and goal.
@@ -882,8 +882,8 @@ func gcSetTriggerRatio(triggerRatio float64) {
 		// trigger. Compute the ratio of in-use pages to sweep
 		// per byte allocated, accounting for the fact that
 		// some might already be swept.
-		heapLiveBasis := atomic.Load64(&memstats.heap_live)
-		heapDistance := int64(trigger) - int64(heapLiveBasis)
+		heapLiveBasis := atomic.Load64(&memstats.heap_live)   //已标记完的存活字节数
+		heapDistance := int64(trigger) - int64(heapLiveBasis) //下次触发内存/标记完后存活的内存，从当前内存到触发gc之间哈可以分配多少内存
 		// Add a little margin so rounding errors and
 		// concurrent sweep are less likely to leave pages
 		// unswept when GC starts.
@@ -963,7 +963,7 @@ const gcAssistTimeSlack = 5000
 const gcOverAssistWork = 64 << 10
 
 var work struct {
-	full  lfstack          // lock-free list of full blocks workbuf
+	full  lfstack          // lock-free list of full blocks workbuf //存放载满要扫描元素的workbuf
 	empty lfstack          // lock-free list of empty blocks workbuf
 	pad0  cpu.CacheLinePad // prevents false-sharing between full/empty and nproc/nwait
 
@@ -971,10 +971,10 @@ var work struct {
 		lock mutex
 		// free is a list of spans dedicated to workbufs, but
 		// that don't currently contain any workbufs.
-		free mSpanList
+		free mSpanList //没有被使用的span，每个span地址空间为32k
 		// busy is a list of all spans containing workbufs on
 		// one of the workbuf lists.
-		busy mSpanList
+		busy mSpanList //已经被占用的span
 	}
 
 	// Restore 64-bit alignment on 32-bit.
@@ -1334,11 +1334,11 @@ func gcStart(trigger gcTrigger) {
 	systemstack(stopTheWorldWithSema)
 	// Finish sweep before we start concurrent scan.
 	systemstack(func() {
-		finishsweep_m()
+		finishsweep_m() //等待完成上一轮清扫
 	})
 	// clearpools before we start the GC. If we wait they memory will not be
 	// reclaimed until the next GC cycle.
-	clearpools()
+	clearpools() //清理内存池
 
 	work.cycles++
 
@@ -1368,8 +1368,8 @@ func gcStart(trigger gcTrigger) {
 	// possible.
 	setGCPhase(_GCmark)
 
-	gcBgMarkPrepare() // Must happen before assist enable.
-	gcMarkRootPrepare()
+	gcBgMarkPrepare()   // Must happen before assist enable.
+	gcMarkRootPrepare() //先将根准备好
 
 	// Mark all active tinyalloc blocks. Since we're
 	// allocating from these, they need to be black like
@@ -1459,7 +1459,7 @@ top:
 	// empty before performing the ragged barrier. Otherwise,
 	// there could be global work that a P could take after the P
 	// has passed the ragged barrier.
-	if !(gcphase == _GCmark && work.nwait == work.nproc && !gcMarkWorkAvailable(nil)) {
+	if !(gcphase == _GCmark && work.nwait == work.nproc && !gcMarkWorkAvailable(nil)) { //校验是否是标记阶段且没有执行标记的g且没有标记工作
 		semrelease(&work.markDoneSema)
 		return
 	}
@@ -1476,7 +1476,7 @@ top:
 		forEachP(func(_p_ *p) {
 			// Flush the write barrier buffer, since this may add
 			// work to the gcWork.
-			wbBufFlush1(_p_)
+			wbBufFlush1(_p_) //将写屏障的缓存进行一次扫描，并将其加入到工作队列中
 			// For debugging, shrink the write barrier
 			// buffer so it flushes immediately.
 			// wbBuf.reset will keep it at this size as
@@ -1514,7 +1514,7 @@ top:
 		casgstatus(gp, _Gwaiting, _Grunning)
 	})
 
-	if gcMarkDoneFlushed != 0 {
+	if gcMarkDoneFlushed != 0 { //如果有p将有工作的本地工作队列刷回全局队列，则再次到top进行检查
 		if debugCachedWork {
 			// Release paused gcWorks.
 			atomic.Xadd(&gcWorkPauseGen, 1)
@@ -1588,7 +1588,7 @@ top:
 		systemstack(func() {
 			for _, p := range allp {
 				wbBufFlush1(p)
-				if !p.gcw.empty() {
+				if !p.gcw.empty() { //如果还有扫描工作没有昨晚，则需要重启the world并进行扫描
 					restart = true
 					break
 				}
@@ -1764,7 +1764,7 @@ func gcMarkTermination(nextTriggerRatio float64) {
 	prepareFreeWorkbufs()
 
 	// Free stack spans. This must be done between GC cycles.
-	systemstack(freeStackSpans)
+	systemstack(freeStackSpans) //释放栈span
 
 	// Ensure all mcaches are flushed. Each P will flush its own
 	// mcache before allocating, but idle Ps may not. Since this
@@ -1839,7 +1839,7 @@ func gcBgMarkStartWorkers() {
 	for _, p := range allp {
 		if p.gcBgMarkWorker == 0 {
 			go gcBgMarkWorker(p)
-			notetsleepg(&work.bgMarkReady, -1)
+			notetsleepg(&work.bgMarkReady, -1) //睡眠等待被唤醒，上一步创建的协程被调度到的时候，会发送唤醒信号
 			noteclear(&work.bgMarkReady)
 		}
 	}
@@ -1904,7 +1904,7 @@ func gcBgMarkWorker(_p_ *p) {
 			// attach, the owner P may schedule the
 			// worker, so this must be done after the G is
 			// stopped.
-			if park.attach != 0 {
+			if park.attach != 0 { //确保这个g会被附加到指定的p上
 				p := park.attach.ptr()
 				park.attach.set(nil)
 				// cas the worker because we may be
@@ -1913,7 +1913,7 @@ func gcBgMarkWorker(_p_ *p) {
 				if !p.gcBgMarkWorker.cas(0, guintptr(unsafe.Pointer(g))) {
 					// The P got a new worker.
 					// Exit this worker.
-					return false
+					return false //false 此g会立刻被执行后续逻辑
 				}
 			}
 			return true
@@ -1957,15 +1957,15 @@ func gcBgMarkWorker(_p_ *p) {
 			default:
 				throw("gcBgMarkWorker: unexpected gcMarkWorkerMode")
 			case gcMarkWorkerDedicatedMode:
-				gcDrain(&_p_.gcw, gcDrainUntilPreempt|gcDrainFlushBgCredit)
-				if gp.preempt {
+				gcDrain(&_p_.gcw, gcDrainUntilPreempt|gcDrainFlushBgCredit) //需要先设置成gcDrainUntilPreempt，因为做职业扫描的p上可能还有其他的g，如果不能抢占会导致这些g可能无法运行
+				if gp.preempt {                                             //如果gp被抢占
 					// We were preempted. This is
 					// a useful signal to kick
 					// everything out of the run
 					// queue so it can run
 					// somewhere else.
 					lock(&sched.lock)
-					for {
+					for { //将p上其他所有的g放到全局队列中，不至于这些g长时间得不到执行
 						gp, _ := runqget(_p_)
 						if gp == nil {
 							break
@@ -1976,7 +1976,7 @@ func gcBgMarkWorker(_p_ *p) {
 				}
 				// Go back to draining, this time
 				// without preemption.
-				gcDrain(&_p_.gcw, gcDrainFlushBgCredit)
+				gcDrain(&_p_.gcw, gcDrainFlushBgCredit) //开启职业扫描
 			case gcMarkWorkerFractionalMode:
 				gcDrain(&_p_.gcw, gcDrainFractional|gcDrainUntilPreempt|gcDrainFlushBgCredit)
 			case gcMarkWorkerIdleMode:
@@ -2009,7 +2009,7 @@ func gcBgMarkWorker(_p_ *p) {
 
 		// If this worker reached a background mark completion
 		// point, signal the main GC goroutine.
-		if incnwait == work.nproc && !gcMarkWorkAvailable(nil) {
+		if incnwait == work.nproc && !gcMarkWorkAvailable(nil) { //如果没有p在进行扫描工作且也没有扫描工作可做，则标记完成
 			// Make this G preemptible and disassociate it
 			// as the worker for this P so
 			// findRunnableGCWorker doesn't try to
@@ -2155,7 +2155,7 @@ func gcSweep(mode gcMode) {
 		throw("non-empty swept list")
 	}
 	mheap_.pagesSwept = 0
-	mheap_.sweepArenas = mheap_.allArenas
+	mheap_.sweepArenas = mheap_.allArenas //
 	mheap_.reclaimIndex = 0
 	mheap_.reclaimCredit = 0
 	unlock(&mheap_.lock)

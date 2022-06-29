@@ -55,7 +55,7 @@ import (
 const (
 	// The size of a bitmap chunk, i.e. the amount of bits (that is, pages) to consider
 	// in the bitmap at once.
-	pallocChunkPages    = 1 << logPallocChunkPages    //一个块的页数  1<<9 = 512个页
+	pallocChunkPages    = 1 << logPallocChunkPages    //一个块的页数  1<<9 = 512个页 golang的页大小为8k
 	pallocChunkBytes    = pallocChunkPages * pageSize //块大小 1^22 4M
 	logPallocChunkPages = 9
 	logPallocChunkBytes = logPallocChunkPages + pageShift //块字节数 22个字节
@@ -166,6 +166,7 @@ func blockAlignSummaryRange(level int, lo, hi int) (int, int) {
 	return int(alignDown(uintptr(lo), e)), int(alignUp(uintptr(hi), e))
 }
 
+//pageAlloc 不实际拥有内存堆，其主要作用是记录内存使用信息，通过它可以方便快速地搜寻到可用的内存。mheap对象分配好内存后，告知pageAlloc有新的内存可用了，pageAlloc将这些内存记录在自己的本本上。
 type pageAlloc struct {
 	// Radix tree of summaries.
 	//
@@ -188,7 +189,7 @@ type pageAlloc struct {
 	//
 	// We may still get segmentation faults < len since some of that
 	// memory may not be committed yet.
-	summary [summaryLevels][]pallocSum
+	summary [summaryLevels][]pallocSum //每一层的summary都表示这0-最大值的范围，所以大多数的pallocSum数据是用不到的，golang在实现的时候用mmap对summary进行分配，先预留，到用到的时候才真的映射，节省了实际的物理空间
 
 	// chunks is a slice of bitmap chunks.
 	//
@@ -355,7 +356,7 @@ func (s *pageAlloc) chunkOf(ci chunkIdx) *pallocData {
 // It may allocate metadata, in which case *s.sysStat will be updated.
 //
 // s.mheapLock must be held.
-func (s *pageAlloc) grow(base, size uintptr) {
+func (s *pageAlloc) grow(base, size uintptr) { //pageAlloc本质上以块(4M)为单位进行内存管理,将增加的内存放到管理的域中，inUse、chunks中并更新summary数据
 	// Round up to chunks, since we can't deal with increments smaller
 	// than chunks. Also, sysGrow expects aligned values.
 	limit := alignUp(base+size, pallocChunkBytes)
@@ -363,7 +364,7 @@ func (s *pageAlloc) grow(base, size uintptr) {
 
 	// Grow the summary levels in a system-dependent manner.
 	// We just update a bunch of additional metadata here.
-	s.sysGrow(base, limit)
+	s.sysGrow(base, limit) //将需要summary的空间转换可用
 
 	// Update s.start and s.end.
 	// If no growth happened yet, start == 0. This is generally
@@ -379,12 +380,12 @@ func (s *pageAlloc) grow(base, size uintptr) {
 	// Note that [base, limit) will never overlap with any existing
 	// range inUse because grow only ever adds never-used memory
 	// regions to the page allocator.
-	s.inUse.add(addrRange{base, limit})
+	s.inUse.add(addrRange{base, limit}) //将空间地址放到inUse中，标记其是正在使用的空间
 
 	// A grow operation is a lot like a free operation, so if our
 	// chunk ends up below the (linearized) s.searchAddr, update
 	// s.searchAddr to the new address, just like in free.
-	if s.compareSearchAddrTo(base) < 0 {
+	if s.compareSearchAddrTo(base) < 0 { //新分配的地址比searchAddr小，更新searchAddr
 		s.searchAddr = base
 	}
 
@@ -394,7 +395,7 @@ func (s *pageAlloc) grow(base, size uintptr) {
 	// Newly-grown memory is always considered scavenged.
 	// Set all the bits in the scavenged bitmaps high.
 	for c := chunkIndex(base); c < chunkIndex(limit); c++ {
-		if s.chunks[c.l1()] == nil {
+		if s.chunks[c.l1()] == nil { //如果二级数据没有分配则进行分配
 			// Create the necessary l2 entry.
 			//
 			// Store it atomically to avoid races with readers which
@@ -402,13 +403,13 @@ func (s *pageAlloc) grow(base, size uintptr) {
 			r := sysAlloc(unsafe.Sizeof(*s.chunks[0]), s.sysStat)
 			atomic.StorepNoWB(unsafe.Pointer(&s.chunks[c.l1()]), r)
 		}
-		s.chunkOf(c).scavenged.setRange(0, pallocChunkPages)
+		s.chunkOf(c).scavenged.setRange(0, pallocChunkPages) //将整个块都标记为清扫？
 	}
 
 	// Update summaries accordingly. The grow acts like a free, so
 	// we need to ensure this newly-free memory is visible in the
 	// summaries.
-	s.update(base, size/pageSize, true, false)
+	s.update(base, size/pageSize, true, false) //更新summary数据
 }
 
 // update updates heap metadata. It must be called each time the bitmap
@@ -486,8 +487,8 @@ func (s *pageAlloc) update(base, npages uintptr, contig, alloc bool) {
 
 		// Iterate over each block, updating the corresponding summary in the less-granular level.
 		for i := lo; i < hi; i++ {
-			children := s.summary[l+1][i<<logEntriesPerBlock : (i+1)<<logEntriesPerBlock]
-			sum := mergeSummaries(children, logMaxPages)
+			children := s.summary[l+1][i<<logEntriesPerBlock : (i+1)<<logEntriesPerBlock] //获取块对应下层的孩子节点数据
+			sum := mergeSummaries(children, logMaxPages)                                  //从孩子节点获取整体的Summary
 			old := s.summary[l][i]
 			if old != sum {
 				changed = true
@@ -505,7 +506,7 @@ func (s *pageAlloc) update(base, npages uintptr, contig, alloc bool) {
 // allocated range.
 //
 // s.mheapLock must be held.
-func (s *pageAlloc) allocRange(base, npages uintptr) uintptr {
+func (s *pageAlloc) allocRange(base, npages uintptr) uintptr { //将分配的页都标记为已分配未清扫，并返回其中之前已经被标记为清扫状态字节数量
 	limit := base + npages*pageSize - 1
 	sc, ec := chunkIndex(base), chunkIndex(limit)
 	si, ei := chunkPageIndex(base), chunkPageIndex(limit)
@@ -661,10 +662,10 @@ nextLevel:
 
 		// We've moved into a new level, so let's update i to our new
 		// starting index. This is a no-op for level 0.
-		i <<= levelBits[l]
+		i <<= levelBits[l] //i表示找到的时候的上层summary的索引，上层summary索引偏移levelBits[l]，就能找到其对应的本层第一个summary的索引值
 
 		// Slice out the block of entries we care about.
-		entries := s.summary[l][i : i+entriesPerBlock]
+		entries := s.summary[l][i : i+entriesPerBlock] //仅仅从上层对应的本层的几个summary寻找即可
 
 		// Determine j0, the first index we should start iterating from.
 		// The searchAddr may help us eliminate iterations if we followed the
@@ -688,7 +689,7 @@ nextLevel:
 		var base, size uint
 		for j := j0; j < len(entries); j++ {
 			sum := entries[j]
-			if sum == 0 {
+			if sum == 0 { //此summary对应的地址空间没有空闲空间
 				// A full entry means we broke any streak and
 				// that we should skip it altogether.
 				size = 0
@@ -696,7 +697,7 @@ nextLevel:
 			}
 
 			// We've encountered a non-zero summary which means
-			// free memory, so update firstFree.
+			// free memory, so update firstFree. 将summary地址空间如果可能的话标记到发现空闲的地址空间中
 			foundFree(uintptr((i+j)<<levelShift[l]), (uintptr(1)<<logMaxPages)*pageSize)
 
 			s := sum.start()
@@ -705,40 +706,40 @@ nextLevel:
 				// which means base isn't valid. So, set
 				// base to the first page in this block.
 				if size == 0 {
-					base = uint(j) << logMaxPages
+					base = uint(j) << logMaxPages //如果上个summary end为0，则基地址为level的第j的summary对应的内存基地址
 				}
 				// We hit npages; we're done!
 				size += s
 				break
 			}
-			if sum.max() >= uint(npages) {
+			if sum.max() >= uint(npages) { //如果在最大处找到，直接遍历下层summary
 				// The entry itself contains npages contiguous
 				// free pages, so continue on the next level
 				// to find that run.
 				i += j
-				lastSumIdx = i
+				lastSumIdx = i //当前summary的索引
 				lastSum = sum
 				continue nextLevel
 			}
-			if size == 0 || s < 1<<logMaxPages {
+			if size == 0 || s < 1<<logMaxPages { //s < 1<<logMaxPages表示此summary表示的空间，不是全部空闲，中间有部分已经被使用
 				// We either don't have a current run started, or this entry
 				// isn't totally free (meaning we can't continue the current
 				// one), so try to begin a new run by setting size and base
 				// based on sum.end.
 				size = sum.end()
-				base = uint(j+1)<<logMaxPages - size
+				base = uint(j+1)<<logMaxPages - size //如果end中有空闲，则基地址为下一个summary对应的基地址-size
 				continue
 			}
 			// The entry is completely free, so continue the run.
-			size += 1 << logMaxPages
+			size += 1 << logMaxPages //表示着当前summary对应的空间都是空闲的，但是npages所要求的空间比一个summary更大
 		}
 		if size >= uint(npages) {
 			// We found a sufficiently large run of free pages straddling
 			// some boundary, so compute the address and return it.
 			addr := uintptr(i<<levelShift[l]) - arenaBaseOffset + uintptr(base)*pageSize
-			return addr, s.findMappedAddr(firstFree.base - arenaBaseOffset)
+			return addr, s.findMappedAddr(firstFree.base - arenaBaseOffset) //基地址不能直接返回，因为基地址处可能不可使用，所以需要从基地址出搜寻到可用地址返回
 		}
-		if l == 0 {
+		if l == 0 { //表示在第0层都没有找到可用空间
 			// We're at level zero, so that means we've exhausted our search.
 			return 0, maxSearchAddr
 		}
@@ -796,7 +797,7 @@ nextLevel:
 func (s *pageAlloc) alloc(npages uintptr) (addr uintptr, scav uintptr) {
 	// If the searchAddr refers to a region which has a higher address than
 	// any known chunk, then we know we're out of memory.
-	if chunkIndex(s.searchAddr) >= s.end {
+	if chunkIndex(s.searchAddr) >= s.end { //pageAlloc中没有可用空间
 		return 0, 0
 	}
 
@@ -806,7 +807,7 @@ func (s *pageAlloc) alloc(npages uintptr) (addr uintptr, scav uintptr) {
 	if pallocChunkPages-chunkPageIndex(s.searchAddr) >= uint(npages) {
 		// npages is guaranteed to be no greater than pallocChunkPages here.
 		i := chunkIndex(s.searchAddr)
-		if max := s.summary[len(s.summary)-1][i].max(); max >= uint(npages) {
+		if max := s.summary[len(s.summary)-1][i].max(); max >= uint(npages) { //如果当前块满足分配需要直接从当前块中获取
 			j, searchIdx := s.chunkOf(i).find(npages, chunkPageIndex(s.searchAddr))
 			if j < 0 {
 				print("runtime: max = ", max, ", npages = ", npages, "\n")
@@ -820,9 +821,9 @@ func (s *pageAlloc) alloc(npages uintptr) (addr uintptr, scav uintptr) {
 	}
 	// We failed to use a searchAddr for one reason or another, so try
 	// the slow path.
-	addr, searchAddr = s.find(npages)
+	addr, searchAddr = s.find(npages) //如果从当前的块中未找到合适的空间，则全局搜寻
 	if addr == 0 {
-		if npages == 1 {
+		if npages == 1 { //如果在全局中一个空闲页都没有找到，则标记searchAddr为最大值
 			// We failed to find a single free page, the smallest unit
 			// of allocation. This means we know the heap is completely
 			// exhausted. Otherwise, the heap still might have free
@@ -839,7 +840,7 @@ Found:
 	// If we found a higher (linearized) searchAddr, we know that all the
 	// heap memory before that searchAddr in a linear address space is
 	// allocated, so bump s.searchAddr up to the new one.
-	if s.compareSearchAddrTo(searchAddr) > 0 {
+	if s.compareSearchAddrTo(searchAddr) > 0 { //如果新的搜索地址比当前地址大代表searchAddr之前的内存已经被都分配
 		s.searchAddr = searchAddr
 	}
 	return addr, scav
@@ -848,7 +849,7 @@ Found:
 // free returns npages worth of memory starting at base back to the page heap.
 //
 // s.mheapLock must be held.
-func (s *pageAlloc) free(base, npages uintptr) {
+func (s *pageAlloc) free(base, npages uintptr) { //将pageAlloc.chunks中对应的页位清除，并更新summary的值
 	// If we're freeing pages below the (linearized) s.searchAddr, update searchAddr.
 	if s.compareSearchAddrTo(base) < 0 {
 		s.searchAddr = base
@@ -897,7 +898,7 @@ const (
 // a bitmap and are thus counts, each of which may have a maximum value of      |<--0-20-->|<--21-41-->|<--42-62-->|-63-|
 // 2^21 - 1, or all three may be equal to 2^21. The latter case is represented  |    start |   max     |   end     |    |
 // by just setting the 64th bit.
-type pallocSum uint64 //64为被拆分为start、max、end，这三个值最大值为2^21-1,也可能是2^21此时第63位为1
+type pallocSum uint64 //64位被拆分为start、max、end，这三个值最大值为2^21-1,也可能是2^21此时第63位为1
 
 // packPallocSum takes a start, max, and end value and produces a pallocSum.
 func packPallocSum(start, max, end uint) pallocSum {
@@ -958,7 +959,7 @@ func mergeSummaries(sums []pallocSum, logMaxPagesPerSum uint) pallocSum {
 		// Merge in sums[i].start only if the running summary is
 		// completely free, otherwise this summary's start
 		// plays no role in the combined sum.
-		if start == uint(i)<<logMaxPagesPerSum {
+		if start == uint(i)<<logMaxPagesPerSum { //每个summary包含1<<logMaxPagesPerSum个页，如果start==1<<logMaxPagesPerSum，代表着i前面summary的所有页都被释放了（空闲的）
 			start += si
 		}
 
@@ -966,7 +967,7 @@ func mergeSummaries(sums []pallocSum, logMaxPagesPerSum uint) pallocSum {
 		// across the boundary between the running sum and sums[i]
 		// and at the max sums[i], taking the greatest of those two
 		// and the max of the running sum.
-		if end+si > max {
+		if end+si > max { //前一个的end+后一个start可以构建一个大的max
 			max = end + si
 		}
 		if mi > max {

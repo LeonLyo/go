@@ -429,7 +429,7 @@ type g struct {
 	asyncSafePoint bool
 
 	paniconfault bool // panic (instead of crash) on unexpected fault address
-	gcscandone   bool // g has scanned stack; protected by _Gscan bit in status
+	gcscandone   bool // g has scanned stack; protected by _Gscan bit in status //标志着g的栈是否被扫描过了
 	throwsplit   bool // must not split stack
 	// activeStackChans indicates that there are unlocked channels
 	// pointing into this goroutine's stack. If true, stack
@@ -471,7 +471,7 @@ type g struct {
 	// scan work. We track this in bytes to make it fast to update
 	// and check for debt in the malloc hot path. The assist ratio
 	// determines how this corresponds to scan work debt.
-	gcAssistBytes int64
+	gcAssistBytes int64 //g需要完成的辅助扫描工作量
 }
 
 type m struct {
@@ -514,7 +514,7 @@ type m struct {
 	park          note
 	alllink       *m // on allm
 	schedlink     muintptr
-	mcache        *mcache
+	mcache        *mcache //m在绑定p的时候，将p的mcache赋值给mcache
 	lockedg       guintptr
 	createstack   [32]uintptr // stack that created this thread.
 	lockedExt     uint32      // tracking for external LockOSThread
@@ -628,7 +628,7 @@ type p struct {
 
 	// Per-P GC state
 	gcAssistTime         int64    // Nanoseconds in assistAlloc
-	gcFractionalMarkTime int64    // Nanoseconds in fractional mark worker (atomic)
+	gcFractionalMarkTime int64    // Nanoseconds in fractional mark worker (atomic) //执行标记作业花费的时间
 	gcBgMarkWorker       guintptr // (atomic)
 	gcMarkWorkerMode     gcMarkWorkerMode
 
